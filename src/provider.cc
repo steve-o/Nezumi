@@ -368,20 +368,6 @@ nezumi::provider_t::sendDirectoryResponse()
 /* Attrib:      Not used */
 	response.setAttribInfo (attribInfo);
 
-/* 7.4.8 Sending Response Messages using an OMM Provider */
-/* 6.2.8 Quality of Service. */
-	rfa::common::QualityOfService QoS;
-/* Timeliness: age of data, either real-time, unspecified delayed timeliness,
- * unspecified timeliness, or any positive number representing the actual
- * delay in seconds.
- */
-	QoS.setTimeliness (rfa::common::QualityOfService::realTime);
-/* Rate: minimum period of change in data, either tick-by-tick, just-in-time
- * filtered rate, unspecified rate, or any positive number representing the
- * actual rate in milliseconds.
- */
-	QoS.setRate (rfa::common::QualityOfService::tickByTick);
-
 /* 5.4.4 Versioning Support.  RFA Data and Msg interfaces provide versioning
  * functionality to allow application to encode data with a connection's
  * negotiated RWF version. Versioning support applies only to OMM connection
@@ -390,7 +376,7 @@ nezumi::provider_t::sendDirectoryResponse()
 // not std::map :(  derived from rfa::common::Data
 	rfa::data::Map map;
 	map.setAssociatedMetaInfo (rwf_major_version, rwf_minor_version);
-	encoder.encodeDirectoryDataBody (&map, *new RFA_String (config.service_name.c_str()), *new RFA_String (rfa.getVendorName()), &QoS);
+	encoder.encodeDirectoryDataBody (&map, *new RFA_String (config.service_name.c_str()), *new RFA_String (rfa.getVendorName()), nullptr);
 	response.setPayload (map);
 
 	rfa::common::RespStatus status;
