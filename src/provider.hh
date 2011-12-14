@@ -18,7 +18,6 @@
 
 #include "rfa.hh"
 #include "config.hh"
-#include "event_queue.hh"
 
 namespace nezumi
 {
