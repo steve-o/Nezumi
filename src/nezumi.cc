@@ -1,25 +1,41 @@
 /* Velocity Analytics RDM publisher plugin.
  */
 
+#include "nezumi.hh"
+
+/* Windows SDK */
+#include <windows.h>
+
 /* RFA 7.2 headers */
 #include <rfa.hh>
 
 /* RFA 7.2 additional library */
 
-#include <StarterCommon/AppUtil.h>
-#include <StarterCommon/CtrlBreakHandler.h>
 #include <StarterCommon/Encoder.h>
 
-#include "nezumi.hh"
 #include "error.hh"
 
-static const char* kApplicationName = "Nezumi";
+/* RDM Usage Guide: Section 6.5: Enterprise Platform
+ * For future compatibility, the DictionaryId should be set to 1 by providers.
+ * The DictionaryId for the RDMFieldDictionary is 1.
+ */
+static const int kDictionaryId = 1;
+
+/* RDM: Absolutely no idea. */
+static const int kFieldListId = 3;
+
+/* RDM Field Identifiers. */
+static const int kRdmRdnDisplayId = 2;		/* RDNDISPLAY */
+static const int kRdmTradePriceId = 6;		/* TRDPRC_1 */
 
 using rfa::common::RFA_String;
 
+static bool isShutdown = false;
+
 nezumi::nezumi_t::nezumi_t() :
-	rfa (config),
-	provider (kApplicationName, rfa, encoder, config)
+	event_queue_ (nullptr),
+	provider_ (nullptr),
+	timer_ (nullptr)
 {
 }
 
@@ -33,73 +49,132 @@ nezumi::nezumi_t::run (
 	const char*	argv[]
 	)
 {
-/* RFA StarterCommon based logging. */
-	if (!log.init (kApplicationName))
-		return EXIT_FAILURE;
+	rfa_t* rfa = nullptr;
+	logging::LogEventProvider* log = nullptr;
 
-/* Windows termination notifier. */
-	if (!CtrlBreakHandler::init())
-		return EXIT_FAILURE;
+	LOG(INFO) << config_;
 
 	try {
 /* RFA context. */
-		if (!rfa.init())
+		rfa = new rfa_t (config_);
+		if (nullptr == rfa || !rfa->init())
 			goto cleanup;
 
 /* RFA asynchronous event queue. */
-		if (!event_queue.init())
+		const RFA_String eventQueueName (config_.event_queue_name.c_str(), 0, false);
+		event_queue_ = rfa::common::EventQueue::create (eventQueueName);
+		if (nullptr == event_queue_)
 			goto cleanup;
 
 /* RFA logging. */
-		if (!log.registerLoggerClient (event_queue))
+		log = new logging::LogEventProvider (config_, *event_queue_);
+		if (nullptr == log || !log->Register())
 			goto cleanup;
 
 /* RFA provider. */
-		if (!provider.init (event_queue))
+		provider_ = new provider_t (config_, *rfa, *event_queue_);
+		if (nullptr == provider_ || !provider_->init())
+			goto cleanup;
+
+		{
+			char buffer[1024];
+			sprintf (buffer, "1/token address is %p", &msft_stream_.token);
+			LOG(INFO) << buffer;
+		}
+
+/* Create state for published RIC. */
+		static const char* msft = "MSFT.O";
+		if (!provider_->createItemStream (msft, msft_stream_))
+			goto cleanup;
+
+/* RFA example timer queue. */
+		timer_ = new Timer();
+		if (nullptr == timer_)
 			goto cleanup;
 
 	} catch (rfa::common::InvalidUsageException& e) {
-		AppUtil::log (
-			0,
-			AppUtil::ERR,
-			"InvalidUsageException: { Severity: \"%s\", Classification: \"%s\", StatusText: \"%s\" }",
-			severity_string (e.getSeverity()),
-			classification_string (e.getClassification()),
-			e.getStatus().getStatusText().c_str());
+		LOG(ERROR) << "InvalidUsageException: { "
+			"Severity: \"" << severity_string (e.getSeverity()) << "\""
+			", Classification: \"" << classification_string (e.getClassification()) << "\""
+			", StatusText: \"" << e.getStatus().getStatusText() << "\" }";
 		goto cleanup;
 	} catch (rfa::common::InvalidConfigurationException& e) {
-		AppUtil::log (
-			0,
-			AppUtil::ERR,
-			"InvalidConfigurationException: { Severity: \"%s\", Classification: \"%s\", StatusText: \"%s\", ParameterName: \"%s\", ParameterValue: \"%s\" }",
-			severity_string (e.getSeverity()),
-			classification_string (e.getClassification()),
-			e.getStatus().getStatusText().c_str(),
-			e.getParameterName().c_str(),
-			e.getParameterValue().c_str());
+		LOG(ERROR) << "InvalidConfigurationException: { "
+			"Severity: \"" << severity_string (e.getSeverity()) << "\""
+			", Classification: \"" << classification_string (e.getClassification()) << "\""
+			", StatusText: \"" << e.getStatus().getStatusText() << "\""
+			", ParameterName: \"" << e.getParameterName() << "\""
+			", ParameterValue: \"" << e.getParameterValue() << "\" }";
 		goto cleanup;
 	}
 
 /* Timer for demo periodic publishing of items.
  */
-	timer.addTimerClient (*this, 1000 /* ms */, true);
+	timer_->addTimerClient (*this, 1000 /* ms */, true);
 
-	while (!CtrlBreakHandler::isTerminated())
-	{
-		const long nextTimerVal = timer.nextTimer();
-		long timeOut = rfa::common::Dispatchable::NoWait;
-		if (INFINITE != nextTimerVal) {
-			if (nextTimerVal <= Timer_MinimumInterval)
-				timer.processExpiredTimers();
-			timeOut = nextTimerVal;
-		}
-		while (event_queue.dispatch (timeOut) > rfa::common::Dispatchable::NothingDispatched);
-	}
+	mainLoop ();
+
+	event_queue_->deactivate();
+	event_queue_->destroy();
+	log->Unregister();
 
 	return EXIT_SUCCESS;
 cleanup:
-	CtrlBreakHandler::exit();
 	return EXIT_FAILURE;
+}
+
+/* On a shutdown event set a global flag and force the event queue
+ * to catch the event by submitting a log event.
+ */
+static
+BOOL
+CtrlHandler (
+	DWORD	fdwCtrlType
+	)
+{
+	const char* message;
+	switch (fdwCtrlType) {
+	case CTRL_C_EVENT:
+		message = "Caught ctrl-c event, shutting down";
+		break;
+	case CTRL_CLOSE_EVENT:
+		message = "Caught close event, shutting down";
+		break;
+	case CTRL_BREAK_EVENT:
+		message = "Caught ctrl-break event, shutting down";
+		break;
+	case CTRL_LOGOFF_EVENT:
+		message = "Caught logoff event, shutting down";
+		break;
+	case CTRL_SHUTDOWN_EVENT:
+	default:
+		message = "Caught shutdown event, shutting down";
+		break;
+	}
+	::isShutdown = true;
+	LOG(INFO) << message;
+	return TRUE;
+}
+
+void
+nezumi::nezumi_t::mainLoop()
+{
+	LOG(INFO) << "Entering mainloop ...";
+/* Add shutdown handler. */
+	::SetConsoleCtrlHandler ((PHANDLER_ROUTINE)::CtrlHandler, TRUE);
+	while (!::isShutdown) {
+		const long nextTimerVal = timer_->nextTimer();
+		long timeOut = rfa::common::Dispatchable::NoWait;
+		if (INFINITE != nextTimerVal) {
+			if (nextTimerVal <= Timer_MinimumInterval)
+				timer_->processExpiredTimers();
+			timeOut = nextTimerVal;
+		}
+		while (event_queue_->dispatch (timeOut) > rfa::common::Dispatchable::NothingDispatched);
+	}
+/* Remove shutdown handler. */
+	::SetConsoleCtrlHandler ((PHANDLER_ROUTINE)::CtrlHandler, FALSE);
+	LOG(INFO) << "Mainloop terminated.";
 }
 
 void
@@ -110,13 +185,10 @@ nezumi::nezumi_t::processTimer (
 	try {
 		sendRefresh();
 	} catch (rfa::common::InvalidUsageException& e) {
-		AppUtil::log (
-			0,
-			AppUtil::ERR,
-			"InvalidUsageException: { Severity: \"%s\", Classification: \"%s\", StatusText: \"%s\" }",
-			severity_string (e.getSeverity()),
-			classification_string (e.getClassification()),
-			e.getStatus().getStatusText().c_str());
+		LOG(ERROR) << "InvalidUsageException: { "
+			"Severity: \"" << severity_string (e.getSeverity()) << "\""
+			", Classification: \"" << classification_string (e.getClassification()) << "\""
+			", StatusText: \"" << e.getStatus().getStatusText() << "\" }";
 	}
 }
 
@@ -137,8 +209,8 @@ nezumi::nezumi_t::sendRefresh()
 /* 7.5.9.5 Create or re-use a request attribute object (4.2.4) */
 	rfa::message::AttribInfo attribInfo;
 	attribInfo.setNameType (rfa::rdm::INSTRUMENT_NAME_RIC);
-	RFA_String ric ("MSFT.O"), service_name (config.service_name.c_str());
-	attribInfo.setName (ric);
+	RFA_String service_name (config_.service_name.c_str(), 0, false);
+	attribInfo.setName (msft_stream_.name);
 	attribInfo.setServiceName (service_name);
 	response.setAttribInfo (attribInfo);
 
@@ -157,10 +229,33 @@ nezumi::nezumi_t::sendRefresh()
 	QoS.setRate (rfa::common::QualityOfService::tickByTick);
 	response.setQualityOfService (QoS);
 
+	{
 // not std::map :(  derived from rfa::common::Data
-	rfa::data::FieldList fields;
-	encoder.encodeMarketPriceDataBody (&fields, true /* RefreshEnum */);
-	response.setPayload (fields);
+		fields_.setAssociatedMetaInfo (provider_->getRwfMajorVersion(), provider_->getRwfMinorVersion());
+		fields_.setInfo (kDictionaryId, kFieldListId);
+
+		rfa::data::FieldListWriteIterator it;
+		it.start (fields_);
+
+		rfa::data::FieldEntry field;
+		rfa::data::DataBuffer dataBuffer;
+		rfa::data::Real64 real64;
+
+		field.setFieldID (kRdmRdnDisplayId);
+		dataBuffer.setUInt32 (100);
+		field.setData (dataBuffer);
+		it.bind (field);
+
+		field.setFieldID (kRdmTradePriceId);
+		real64.setValue (++msft_stream_.count);
+		real64.setMagnitudeType (rfa::data::ExponentNeg2);
+		dataBuffer.setReal64 (real64);
+		it.bind (field);
+
+		it.complete();
+/* Set a reference to field list, not a copy */
+		response.setPayload (fields_);
+	}
 
 	rfa::common::RespStatus status;
 /* Item interaction state: Open, Closed, ClosedRecover, Redirected, NonStreaming, or Unspecified. */
@@ -177,21 +272,16 @@ nezumi::nezumi_t::sendRefresh()
  * Models as specified in RFA API 7 RDM Usage Guide.
  */
 	RFA_String warningText;
-	uint8_t validation_status = response.validateMsg (warningText);
-	if (MsgValidationWarning == validation_status) {
-		AppUtil::log (
-			0,
-			AppUtil::WARN,
-			"respMsg::validateMsg: { warningText: \"%s\" }",
-			warningText.c_str());
+	const uint8_t validation_status = response.validateMsg (&warningText);
+	if (rfa::message::MsgValidationWarning == validation_status) {
+		LOG(WARNING) << "respMsg::validateMsg: { warningText: \"" << warningText << "\" }";
 	} else {
-		assert (MsgValidationOk == validation_status);
+		assert (rfa::message::MsgValidationOk == validation_status);
 	}
 #endif
-	
-/* Create a single token for this stream. */
-	static rfa::sessionLayer::ItemToken& token = provider.generateItemToken();
-	provider.submit (static_cast<rfa::common::Msg&> (response), token);
+
+	provider_->send (msft_stream_, static_cast<rfa::common::Msg&> (response));
+	LOG(INFO) << "sent";
 	return true;
 }
 

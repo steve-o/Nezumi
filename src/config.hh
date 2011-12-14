@@ -21,10 +21,28 @@ namespace nezumi
 //  File path for TREP-RT enumerated type dictionary.
 		std::string enumtype_dictionary_path;
 
-//  TREP-RT ADH hostname
+//  RFA session name.
+		std::string session_name;
+
+//  RFA application logger monitor name.
+		std::string monitor_name;
+
+//  RFA event queue name.
+		std::string event_queue_name;
+
+//  RFA connection name.
+		std::string connection_name;
+
+//  RFA publisher name.
+		std::string publisher_name;
+
+//  RFA vendor name.
+		std::string vendor_name;
+
+//  TREP-RT ADH hostname.
 		std::string adh_address;
 
-//  TREP-RT ADH port, e.g. 14002
+//  TREP-RT ADH port, e.g. 14002.
 		std::string adh_port;
 
 //  TREP-RT service name, e.g. IDN_RDF.
@@ -55,6 +73,26 @@ namespace nezumi
  */
 		std::string position;
 	};
+
+	inline
+	std::ostream& operator<< (std::ostream& o, const config_t& config) {
+		o << "config_t: { field_dictionary_path: \"" << config.field_dictionary_path << "\""
+			", enumtype_dictionary_path: \"" << config.enumtype_dictionary_path << "\""
+			", session_name: \"" << config.session_name << "\""
+			", monitor_name: \"" << config.monitor_name << "\""
+			", event_queue_name: \"" << config.event_queue_name << "\""
+			", connection_name: \"" << config.connection_name << "\""
+			", publisher_name: \"" << config.publisher_name << "\""
+			", vendor_name: \"" << config.vendor_name << "\""
+			", adh_address: \"" << config.adh_address << "\""
+			", adh_port: \"" << config.adh_port << "\""
+			", service_name: \"" << config.service_name << "\""
+			", instance_id: \"" << config.instance_id << "\""
+			", application_id: \"" << config.application_id << "\""
+			", user_name: \"" << config.user_name << "\""
+			", position: \"" << config.position << "\" }";
+		return o;
+	}
 
 } /* namespace nezumi */
 

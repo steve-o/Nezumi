@@ -1,8 +1,8 @@
 /* The missing header rfa.hh
  */
 
-#ifndef __RFA_HH__
-#define __RFA_HH__
+#ifndef __RFA_MISSING_HH__
+#define __RFA_MISSING_HH__
 
 #include <Common/Client.h>
 #include <Common/Context.h>
@@ -12,10 +12,19 @@
 #include <Config/ConfigDatabase.h>
 #include <Config/ConfigTree.h>
 #include <Config/StagingConfigDatabase.h>
+#include <Data/Array.h>
+#include <Data/ArrayWriteIterator.h>
+#include <Data/ArrayEntry.h>
 #include <Data/ElementList.h>
-#include <Data/FieldList.h>
-#include <Data/Map.h>
 #include <Data/ElementListWriteIterator.h>
+#include <Data/FieldList.h>
+#include <Data/FieldListWriteIterator.h>
+#include <Data/FilterEntry.h>
+#include <Data/FilterList.h>
+#include <Data/FilterListWriteIterator.h>
+#include <Data/Map.h>
+#include <Data/MapEntry.h>
+#include <Data/MapWriteIterator.h>
 #include <Logger/AppLoggerMonitor.h>
 #include <Logger/AppLoggerInterestSpec.h>
 #include <Logger/AppLogger.h>
@@ -35,6 +44,6 @@
 #include <SessionLayer/OMMItemEvent.h>
 #include <SessionLayer/OMMItemIntSpec.h>
 
-#endif /* __RFA_HH__ */
+#endif /* __RFA_MISSING_HH__ */
 
 /* eof */

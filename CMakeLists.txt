@@ -47,19 +47,15 @@ add_definitions(
 # source files
 
 set(cxx-sources
-	src/nezumi.cc
 	src/config.cc
-	src/rfa.cc
-	src/log.cc
-	src/event_queue.cc
-	src/provider.cc
-	src/main.cc
 	src/error.cc
-	${RFA_ROOT}/Examples/StarterCommon/AppUtil.cpp
-	${RFA_ROOT}/Examples/StarterCommon/CtrlBreakHandler.cpp
-	${RFA_ROOT}/Examples/StarterCommon/Encoder.cpp
-	${RFA_ROOT}/Examples/StarterCommon/ExceptionHandler.cpp
-	${RFA_ROOT}/Examples/StarterCommon/OMMStrings.cpp
+	src/lock_impl_win.cc
+	src/logging.cc
+	src/main.cc
+	src/nezumi.cc
+	src/provider.cc
+	src/rfa.cc
+	src/rfa_logging.cc
 	${RFA_ROOT}/Examples/StarterCommon/Timer.cpp
 )
 

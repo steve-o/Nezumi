@@ -5,16 +5,15 @@
  * useless.
  */
 
+#include "provider.hh"
+
+#include <utility>
+
 /* RFA 7.2 headers */
 #include <rfa.hh>
 
-/* RFA 7.2 additional library */
-
-#include <StarterCommon/AppUtil.h>
-#include <StarterCommon/ExceptionHandler.h>
-
-#include "provider.hh"
 #include "error.hh"
+#include "logging.hh"
 
 using rfa::common::RFA_String;
 
@@ -23,136 +22,125 @@ using rfa::common::RFA_String;
  */
 static const RFA_String kContextName ("RFA");
 
-static const char* severity_string (const int severity_);
-static const char* classification_string (const int classification_);
+/* Reuters Wire Format nomenclature for dictionary names. */
+static const RFA_String kRdmFieldDictionaryName ("RWFFld");
+static const RFA_String kEnumTypeDictionaryName ("RWFEnum");
 
 nezumi::provider_t::provider_t (
-	const char* application_name_,
-	nezumi::rfa_t& rfa_,
-	Encoder& encoder_,
-	const nezumi::config_t& config_
-) :
-	application_name (application_name_),
-	rfa (rfa_),
-	encoder (encoder_),
-	config (config_),
-	session (nullptr),
-	provider (nullptr),
-	is_muted (true)
+	const nezumi::config_t& config,
+	nezumi::rfa_t& rfa,
+	rfa::common::EventQueue& event_queue
+	) :
+	config_ (config),
+	rfa_ (rfa),
+	event_queue_ (event_queue),
+	session_ (nullptr),
+	provider_ (nullptr),
+	rwf_major_version_ (0),
+	rwf_minor_version_ (0),
+	is_muted_ (true)
 {
 }
 
 nezumi::provider_t::~provider_t()
 {
-	if (nullptr != provider)
-		provider->destroy();
+	if (nullptr != provider_)
+		provider_->destroy();
 }
 
 bool
-nezumi::provider_t::init (
-	event_queue_t& event_queue_
-	)
+nezumi::provider_t::init()
 {
 /* 7.2.1 Configuring the Session Layer Package.
  */
-	session = rfa::sessionLayer::Session::acquire (*new RFA_String (rfa.getSessionName()));
-	assert (nullptr != session);
+	const RFA_String sessionName (config_.session_name.c_str(), 0, false);
+	session_ = rfa::sessionLayer::Session::acquire (sessionName);
+	assert (nullptr != session_);
 
 /* 6.2.2.1 RFA Version Info.  The version is only available if an application
  * has acquired a Session (i.e., the Session Layer library is loaded).
  */
-	AppUtil::log (
-		0,
-		AppUtil::INFO,
-		"Rfa: { productVersion: \"%s\" }",
-		rfa::common::Context::getRFAVersionInfo()->getProductVersion().c_str());
+	LOG(INFO) << "RFA: { productVersion: \"" << rfa::common::Context::getRFAVersionInfo()->getProductVersion() << "\" }";
 
 /* 7.5.6 Initializing an OMM Non-Interactive Provider. */
-	provider = session->createOMMProvider (application_name, nullptr);
-	if (nullptr == provider)
+	const RFA_String publisherName (config_.publisher_name.c_str(), 0, false);
+	provider_ = session_->createOMMProvider (publisherName, nullptr);
+	if (nullptr == provider_)
 		return false;
 
 /* 7.5.7 Registering for Events from an OMM Non-Interactive Provider. */
 /* receive error events (OMMCmdErrorEvent) related to calls to submit(). */
 	rfa::sessionLayer::OMMErrorIntSpec ommErrorIntSpec;
-	rfa::common::Handle* handle = event_queue_.registerOMMIntSpecClient (*provider, ommErrorIntSpec, *this, nullptr /* closure */);
+	rfa::common::Handle* handle = provider_->registerClient (&event_queue_, &ommErrorIntSpec, *this, nullptr /* closure */);
 	if (nullptr == handle)
 		return false;
 
-	return sendLoginRequest (event_queue_);
+	return sendLoginRequest();
 }
 
-/* 7.3.5.3 Making a Login Request
+/* 7.3.5.3 Making a Login Request	
  * A Login request message is encoded and sent by OMM Consumer and OMM non-
  * interactive provider applications.
  */
 bool
-nezumi::provider_t::sendLoginRequest (
-	event_queue_t& event_queue_
-	)
+nezumi::provider_t::sendLoginRequest()
 {
 	rfa::message::ReqMsg request;
 	request.setMsgModelType (rfa::rdm::MMT_LOGIN);
 	request.setInteractionType (rfa::message::ReqMsg::InitialImageFlag | rfa::message::ReqMsg::InterestAfterRefreshFlag);
 
 	rfa::message::AttribInfo attribInfo;
-	attribInfo.setNameType (rfa::rdm::USER_NAME);
-	attribInfo.setName (config.user_name.c_str());
-
-	if (!config.application_id.empty() ||
-		!config.position.empty() ||
-		!config.instance_id.empty())
 	{
+		attribInfo.setNameType (rfa::rdm::USER_NAME);
+		const RFA_String userName (config_.user_name.c_str(), 0, false);
+		attribInfo.setName (userName);
+	}
+
 /* The request attributes ApplicationID and Position are encoded as an
  * ElementList (5.3.4).
  */
-		rfa::data::ElementList elementList;
-		rfa::data::ElementListWriteIterator it;
-		it.start (elementList);
+	rfa::data::ElementList elementList;
+	rfa::data::ElementListWriteIterator it;
+	it.start (elementList);
 
-/* Application Id (optional), not detailed by Rfa documentation.
+/* DACS Application Id.
  * e.g. "256"
  */
-		if (!config.application_id.empty())
-		{
-			rfa::data::ElementEntry element;
-			element.setName (*new RFA_String (rfa::rdm::ENAME_APP_ID));
-			rfa::data::DataBuffer elementData;
-			elementData.setFromString (*new RFA_String (config.application_id.c_str()), rfa::data::DataBuffer::StringAsciiEnum);
-			element.setData (elementData);
-			it.bind (element);
-		}
+	rfa::data::ElementEntry element;
+	element.setName (rfa::rdm::ENAME_APP_ID);
+	rfa::data::DataBuffer elementData;
+	{
+		const RFA_String applicationId (config_.application_id.c_str(), 0, false);
+		elementData.setFromString (applicationId, rfa::data::DataBuffer::StringAsciiEnum);
+	}
+	element.setData (elementData);
+	it.bind (element);
 
-/* Position name (optional).
+/* DACS Position name.
  * e.g. "localhost"
  */
-		if (!config.position.empty())
-		{
-			rfa::data::ElementEntry element;
-			element.setName (*new RFA_String (rfa::rdm::ENAME_POSITION));
-			rfa::data::DataBuffer elementData;
-			elementData.setFromString (*new RFA_String (config.position.c_str()), rfa::data::DataBuffer::StringAsciiEnum);
-			element.setData (elementData);
-			it.bind (element);
-		}
+	element.setName (rfa::rdm::ENAME_POSITION);
+	{
+		const RFA_String position (config_.position.c_str(), 0, false);
+		elementData.setFromString (position, rfa::data::DataBuffer::StringAsciiEnum);
+	}
+	element.setData (elementData);
+	it.bind (element);
 
 /* Instance Id (optional).
  * e.g. "<Instance Id>"
  */
-		if (!config.instance_id.empty())
-		{
-			rfa::data::ElementEntry element;
-			element.setName (*new RFA_String (rfa::rdm::ENAME_INST_ID));
-			rfa::data::DataBuffer elementData;
-			elementData.setFromString (*new RFA_String (config.instance_id.c_str()), rfa::data::DataBuffer::StringAsciiEnum);
-			element.setData (elementData);
-			it.bind (element);
-		}
-
-		it.complete();
-		attribInfo.setAttrib (elementList);
+	if (!config_.instance_id.empty())
+	{
+		element.setName (rfa::rdm::ENAME_INST_ID);
+		const RFA_String instanceId (config_.instance_id.c_str(), 0, false);
+		elementData.setFromString (instanceId, rfa::data::DataBuffer::StringAsciiEnum);
+		element.setData (elementData);
+		it.bind (element);
 	}
 
+	it.complete();
+	attribInfo.setAttrib (elementList);
 	request.setAttribInfo (attribInfo);
 
 /* 4.2.8 Message Validation.  RFA provides an interface to verify that
@@ -162,11 +150,7 @@ nezumi::provider_t::sendLoginRequest (
 	RFA_String warningText;
 	uint8_t validation_status = request.validateMsg (&warningText);
 	if (rfa::message::MsgValidationWarning == validation_status) {
-		AppUtil::log (
-			0,
-			AppUtil::WARN,
-			"MMT_LOGIN::validateMsg: { warningText: \"%s\" }",
-			warningText.c_str());
+		LOG(WARNING) << "MMT_LOGIN::validateMsg: { warningText: \"" << warningText << "\" }";
 	} else {
 		assert (rfa::message::MsgValidationOk == validation_status);
 	}
@@ -180,29 +164,60 @@ nezumi::provider_t::sendLoginRequest (
  */
 	rfa::sessionLayer::OMMItemIntSpec ommItemIntSpec;
 	ommItemIntSpec.setMsg (&request);
-	rfa::common::Handle* handle = event_queue_.registerOMMIntSpecClient (*provider, ommItemIntSpec, *this, nullptr /* closure */);
+	rfa::common::Handle* handle = provider_->registerClient (&event_queue_, &ommItemIntSpec, *this, nullptr /* closure */);
 	if (nullptr == handle)
 		return false;
 
 /* Store negotiated Reuters Wire Format version information. */
 	rfa::data::Map map;
 	map.setAssociatedMetaInfo (*handle);
-	rwf_major_version = map.getMajorVersion();
-	rwf_minor_version = map.getMinorVersion();
-	AppUtil::log (
-		0,
-		AppUtil::INFO,
-		"RwfVersion: { MajorVersion: %u, MinorVersion: %u }",
-		rwf_major_version,
-		rwf_minor_version);
-
+	rwf_major_version_ = map.getMajorVersion();
+	rwf_minor_version_ = map.getMinorVersion();
+	LOG(INFO) << "RWF: { MajorVersion: " << (unsigned)rwf_major_version_
+		<< ", MinorVersion: " << (unsigned)rwf_minor_version_ << " }";
 	return true;
 }
 
-rfa::sessionLayer::ItemToken&
-nezumi::provider_t::generateItemToken ()
+/* Create an item stream for a given symbol name.  The Item Stream maintains
+ * the provider state on behalf of the application.
+ */
+bool
+nezumi::provider_t::createItemStream (
+	const char* name,
+	item_stream_t& item_stream
+	)
 {
-	return provider->generateItemToken();
+	item_stream.name.set (name, 0, true);
+	if (!is_muted_) {
+		LOG(INFO) << "Generating token for " << name;
+		item_stream.token = &( provider_->generateItemToken() );
+		assert (nullptr != item_stream.token);
+	} else {
+		LOG(INFO) << "Not generating token for " << name << " as provider is muted.";
+		assert (nullptr == item_stream.token);
+	}
+	const std::string key (name);
+	auto status = directory_.insert (std::make_pair (key, &item_stream));
+	assert (true == status.second);
+	assert (directory_.end() != directory_.find (key));
+	LOG(INFO) << "Directory size: " << directory_.size();
+	return true;
+}
+
+/* Send an Rfa message through the pre-created item stream.
+ */
+
+bool
+nezumi::provider_t::send (
+	item_stream_t& item_stream,
+	rfa::common::Msg& msg
+)
+{
+	if (is_muted_)
+		return false;
+	assert (nullptr != item_stream.token);
+	submit (msg, *item_stream.token);
+	return true;
 }
 
 /* 7.5.9.6 Create the OMMItemCmd object and populate it with the response
@@ -223,7 +238,8 @@ nezumi::provider_t::submit (
 /* 7.5.9.8 Write the response message directly out to the network through the
  * connection.
  */
-	return provider->submit (&itemCmd, closure);
+	assert (nullptr != provider_);
+	return provider_->submit (&itemCmd, closure);
 }
 
 void
@@ -241,6 +257,7 @@ nezumi::provider_t::processEvent (
                 break;
 
         default:
+		LOG(INFO) << "Uncaught: " << event_;
                 break;
         }
 }
@@ -255,19 +272,22 @@ nezumi::provider_t::processOMMItemEvent (
 	const rfa::common::Msg& msg = item_event.getMsg();
 
 /* Verify event is a response event */
-	if (rfa::message::RespMsgEnum != msg.getMsgType())
+	if (rfa::message::RespMsgEnum != msg.getMsgType()) {
+		LOG(INFO) << "Uncaught: " << msg;
 		return;
+	}
 
 	processRespMsg (static_cast<const rfa::message::RespMsg&>(msg));
 }
 
 void
 nezumi::provider_t::processRespMsg (
-	const rfa::message::RespMsg&			reply_msg
+	const rfa::message::RespMsg&	reply_msg
 	)
 {
 /* Verify event is a login response event */
 	if (rfa::rdm::MMT_LOGIN != reply_msg.getMsgModelType()) {
+		LOG(INFO) << "Uncaught: " << reply_msg;
 		return;
 	}
 
@@ -285,6 +305,7 @@ nezumi::provider_t::processRespMsg (
 			break;
 
 		default:
+			LOG(INFO) << "Uncaught: " << reply_msg;
 			break;
 		}
 		break;
@@ -294,6 +315,7 @@ nezumi::provider_t::processRespMsg (
 		break;
 
 	default:
+		LOG(INFO) << "Uncaught: " << reply_msg;
 		break;
 	}
 }
@@ -311,17 +333,16 @@ nezumi::provider_t::processLoginSuccess (
 {
 	try {
 		sendDirectoryResponse();
+		resetTokens();
+		LOG(INFO) << "Unmuting provider.";
+		is_muted_ = false;
+
 /* ignore any error */
 	} catch (rfa::common::InvalidUsageException& e) {
-		AppUtil::log (
-			0,
-			AppUtil::ERR,
-			"MMT_DIRECTORY::validateMsg: { StatusText: \"%s\" }",
-			e.getStatus().getStatusText());
+		LOG(ERROR) << "MMT_DIRECTORY::validateMsg: { StatusText: \"" << e.getStatus().getStatusText() << "\" }";
 /* cannot publish until directory is sent. */
 		return;
 	}
-	is_muted = false;
 }
 
 /* 7.5.9 Sending Response Messages Using an OMM Non-Interactive Provider.
@@ -375,8 +396,7 @@ nezumi::provider_t::sendDirectoryResponse()
  */
 // not std::map :(  derived from rfa::common::Data
 	rfa::data::Map map;
-	map.setAssociatedMetaInfo (rwf_major_version, rwf_minor_version);
-	encoder.encodeDirectoryDataBody (&map, *new RFA_String (config.service_name.c_str()), *new RFA_String (rfa.getVendorName()), nullptr);
+	getServiceDirectory (map);
 	response.setPayload (map);
 
 	rfa::common::RespStatus status;
@@ -395,16 +415,234 @@ nezumi::provider_t::sendDirectoryResponse()
 	RFA_String warningText;
 	uint8_t validation_status = response.validateMsg (&warningText);
 	if (rfa::message::MsgValidationWarning == validation_status) {
-		AppUtil::log (
-			0,
-			AppUtil::WARN,
-			"MMT_DIRECTORY::validateMsg: { warningText: \"%s\" }",
-			warningText.c_str());
+		LOG(WARNING) << "MMT_DIRECTORY::validateMsg: { warningText: \"" << warningText << "\" }";
 	} else {
 		assert (rfa::message::MsgValidationOk == validation_status);
 	}
 
-	submit (static_cast<rfa::common::Msg&> (response), generateItemToken());
+/* Create and throw away first token for MMT_DIRECTORY. */
+	submit (static_cast<rfa::common::Msg&> (response), provider_->generateItemToken());
+	return true;
+}
+
+void
+nezumi::provider_t::getServiceDirectory (
+	rfa::data::Map& map
+	)
+{
+	rfa::data::MapWriteIterator it;
+	rfa::data::MapEntry mapEntry;
+	rfa::data::DataBuffer dataBuffer;
+	rfa::data::FilterList filterList;
+	const RFA_String serviceName (config_.service_name.c_str(), 0, false);
+
+	map.setAssociatedMetaInfo (rwf_major_version_, rwf_minor_version_);
+	it.start (map);
+
+/* No idea ... */
+	map.setKeyDataType (rfa::data::DataBuffer::StringAsciiEnum);
+/* One service. */
+	map.setTotalCountHint (1);
+
+/* Service name -> service filter list */
+	mapEntry.setAction (rfa::data::MapEntry::Add);
+	dataBuffer.setFromString (serviceName, rfa::data::DataBuffer::StringAsciiEnum);
+	mapEntry.setKeyData (dataBuffer);
+	getServiceFilterList (filterList);
+	mapEntry.setData (static_cast<rfa::common::Data&>(filterList));
+	it.bind (mapEntry);
+
+	it.complete();
+}
+
+void
+nezumi::provider_t::getServiceFilterList (
+	rfa::data::FilterList& filterList
+	)
+{
+	rfa::data::FilterListWriteIterator it;
+	rfa::data::FilterEntry filterEntry;
+	rfa::data::ElementList elementList;
+
+	filterList.setAssociatedMetaInfo (rwf_major_version_, rwf_minor_version_);
+	it.start (filterList);  
+
+/* SERVICE_INFO_ID and SERVICE_STATE_ID */
+	filterList.setTotalCountHint (2);
+
+/* SERVICE_INFO_ID */
+	filterEntry.setFilterId (rfa::rdm::SERVICE_INFO_ID);
+	filterEntry.setAction (rfa::data::FilterEntry::Set);
+	getServiceInformation (elementList);
+	filterEntry.setData (static_cast<const rfa::common::Data&>(elementList));
+	it.bind (filterEntry);
+
+/* SERVICE_STATE_ID */
+	filterEntry.setFilterId (rfa::rdm::SERVICE_STATE_ID);
+	filterEntry.setAction (rfa::data::FilterEntry::Set);
+	getServiceState (elementList);
+	filterEntry.setData (static_cast<const rfa::common::Data&>(elementList));
+	it.bind (filterEntry);
+
+	it.complete();
+}
+
+/* SERVICE_INFO_ID
+ * Information about a service that does not update very often.
+ */
+void
+nezumi::provider_t::getServiceInformation (
+	rfa::data::ElementList& elementList
+	)
+{
+	rfa::data::ElementListWriteIterator it;
+	rfa::data::ElementEntry element;
+	rfa::data::DataBuffer dataBuffer;
+	rfa::data::Array array_;
+	const RFA_String serviceName (config_.service_name.c_str(), 0, false);
+
+	elementList.setAssociatedMetaInfo (rwf_major_version_, rwf_minor_version_);
+	it.start (elementList);
+
+/* Name<AsciiString>
+ * Service name. This will match the concrete service name or the service group
+ * name that is in the Map.Key.
+ */
+	element.setName (rfa::rdm::ENAME_NAME);
+	dataBuffer.setFromString (serviceName, rfa::data::DataBuffer::StringAsciiEnum);
+	element.setData (dataBuffer);
+	it.bind (element);
+	
+/* Capabilities<Array of UInt>
+ * Array of valid MessageModelTypes that the service can provide. The UInt
+ * MesageModelType is extensible, using values defined in the RDM Usage Guide
+ * (1-255). Login and Service Directory are omitted from this list. This
+ * element must be set correctly because RFA will only request an item from a
+ * service if the MessageModelType of the request is listed in this element.
+ */
+	element.setName (rfa::rdm::ENAME_CAPABILITIES);
+	getServiceCapabilities (array_);
+	element.setData (static_cast<const rfa::common::Data&>(array_));
+	it.bind (element);
+
+/* DictionariesUsed<Array of AsciiString>
+ * List of Dictionary names that may be required to process all of the data 
+ * from this service. Whether or not the dictionary is required depends on 
+ * the needs of the consumer (e.g. display application, caching application)
+ */
+	element.setName (rfa::rdm::ENAME_DICTIONARYS_USED);
+	getServiceDictionaries (array_);
+	element.setData (static_cast<const rfa::common::Data&>(array_));
+	it.bind (element);
+
+	it.complete();
+}
+
+/* Array of valid MessageModelTypes that the service can provide.
+ * rfa::data::Array does not require version tagging according to examples.
+ */
+void
+nezumi::provider_t::getServiceCapabilities (
+	rfa::data::Array& capabilities
+	)
+{
+	rfa::data::ArrayWriteIterator it;
+	rfa::data::ArrayEntry arrayEntry;
+	rfa::data::DataBuffer dataBuffer;
+
+	it.start (capabilities);
+
+/* MarketPrice = 6 */
+	dataBuffer.setUInt32 (rfa::rdm::MMT_MARKET_PRICE);
+	arrayEntry.setData (dataBuffer);
+	it.bind (arrayEntry);
+
+	it.complete();
+}
+
+void
+nezumi::provider_t::getServiceDictionaries (
+	rfa::data::Array& dictionaries
+	)
+{
+	rfa::data::ArrayWriteIterator it;
+	rfa::data::ArrayEntry arrayEntry;
+	rfa::data::DataBuffer dataBuffer;
+
+	it.start (dictionaries);
+
+/* RDM Field Dictionary */
+	dataBuffer.setFromString (kRdmFieldDictionaryName, rfa::data::DataBuffer::StringAsciiEnum);
+	arrayEntry.setData (dataBuffer);
+	it.bind (arrayEntry);
+
+/* Enumerated Type Dictionary */
+	dataBuffer.setFromString (kEnumTypeDictionaryName, rfa::data::DataBuffer::StringAsciiEnum);
+	arrayEntry.setData (dataBuffer);
+	it.bind (arrayEntry);
+
+	it.complete();
+}
+
+/* SERVICE_STATE_ID
+ * State of a service.
+ */
+void
+nezumi::provider_t::getServiceState (
+	rfa::data::ElementList& elementList
+	)
+{
+	rfa::data::ElementListWriteIterator it;
+	rfa::data::ElementEntry element;
+	rfa::data::DataBuffer dataBuffer;
+
+	elementList.setAssociatedMetaInfo (rwf_major_version_, rwf_minor_version_);
+	it.start (elementList);
+
+/* ServiceState<UInt>
+ * 1: Up/Yes
+ * 0: Down/No
+ * Is the original provider of the data responding to new requests. All
+ * existing streams are left unchanged.
+ */
+	element.setName (rfa::rdm::ENAME_SVC_STATE);
+	dataBuffer.setUInt32 (1);
+	element.setData (dataBuffer);
+	it.bind (element);
+
+/* AcceptingRequests<UInt>
+ * 1: Yes
+ * 0: No
+ * If the value is 0, then consuming applications should not send any new
+ * requests to the service provider. (Reissues may still be sent.) If an RFA
+ * application makes new requests to the service, they will be queued. All
+ * existing streams are left unchanged.
+ */
+	element.setName (rfa::rdm::ENAME_ACCEPTING_REQS);
+	dataBuffer.setUInt32 (1);
+	element.setData (dataBuffer);
+	it.bind (element);
+
+	it.complete();
+}
+
+/* Iterate through entire item dictionary and re-generate tokens.
+ */
+bool
+nezumi::provider_t::resetTokens()
+{
+	LOG(INFO) << "Resetting " << directory_.size() << " provider tokens";
+	unsigned i = 0;
+	assert (nullptr != provider_);
+	for (auto cit = directory_.begin();
+		cit != directory_.end();
+		++cit)
+	{
+		LOG(INFO) << "Token #" << ++i << ": " << cit->first;
+		assert (nullptr != cit->second);
+		cit->second->token = &( provider_->generateItemToken() );
+		assert (nullptr != cit->second->token);
+	}
 	return true;
 }
 
@@ -417,7 +655,7 @@ nezumi::provider_t::processLoginSuspect (
 	const rfa::message::RespMsg&			suspect_msg
 	)
 {
-	is_muted = true;
+	is_muted_ = true;
 }
 
 /* 7.5.8.1.2 Other Login States.
@@ -430,7 +668,7 @@ nezumi::provider_t::processLoginClosed (
 	const rfa::message::RespMsg&			logout_msg
 	)
 {
-	is_muted = true;
+	is_muted_ = true;
 }
 
 /* 7.5.8.2 Handling CmdError Events.
@@ -441,17 +679,14 @@ nezumi::provider_t::processLoginClosed (
  */
 void
 nezumi::provider_t::processOMMCmdErrorEvent (
-	const rfa::sessionLayer::OMMCmdErrorEvent& event_
+	const rfa::sessionLayer::OMMCmdErrorEvent& error
 	)
 {
-	AppUtil::log (
-		0,
-		AppUtil::ERR,
-		"OMMCmdErrorEvent: { CmdId: %u, State: %d, StatusCode: %d, StatusText: \"%s\" }",
-		event_.getCmdID(),
-		event_.getStatus().getState(),
-		event_.getStatus().getStatusCode(),
-		event_.getStatus().getStatusText().c_str());
+	LOG(ERROR) << "OMMCmdErrorEvent: { "
+		"CmdId: " << error.getCmdID() <<
+		", State: " << error.getStatus().getState() <<
+		", StatusCode: " << error.getStatus().getStatusCode() <<
+		", StatusText: \"" << error.getStatus().getStatusText() << "\" }";
 }
 
 /* eof */

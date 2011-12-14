@@ -23,13 +23,23 @@
 #include <StarterCommon/Timer.h>
 
 #include "config.hh"
+#include "logging.hh"
 #include "rfa.hh"
-#include "event_queue.hh"
+#include "rfa_logging.hh"
 #include "provider.hh"
-#include "log.hh"
 
 namespace nezumi
 {
+/* Basic example structure for application state of an item stream. */
+	struct broadcast_stream_t : item_stream_t
+	{
+		broadcast_stream_t () :
+			count (0)
+		{
+		}
+
+		uint64_t	count;
+	};
 
 	class nezumi_t :
 		public TimerClient,
@@ -42,38 +52,34 @@ namespace nezumi
 /* Run the provider with the given command-line parameters.
  * Returns the error code to be returned by main().
  */
-		int run (int argc_, const char* argv_[]);
-
-		void processTimer (void* closure_);
+		int run (int argc, const char* argv[]);
+		void processTimer (void* closure);
 
 	private:
 
-/* Clear state from previous run() */
-		void clear();
+/* Run core event loop. */
+		void mainLoop();
 
 /* Broadcast out message. */
 		bool sendRefresh() throw (rfa::common::InvalidUsageException);
 
 /* Application configuration. */
-		const config_t config;
-
-/* RFA context */
-		rfa_t rfa;
+		const config_t config_;
 
 /* RFA asynchronous event queue. */
-		event_queue_t event_queue;
-
-/* RFA logging */
-		log_t log;
+		rfa::common::EventQueue* event_queue_;
 
 /* RFA provider */
-		provider_t provider;
-
-/* Starter common demo payload. */
-		Encoder encoder;
-
+		provider_t* provider_;
+	
 /* Starter Common timer queue. */
-		Timer timer;
+		Timer* timer_;
+
+/* Item stream. */
+		broadcast_stream_t msft_stream_;
+
+/* Publish fields. */
+		rfa::data::FieldList fields_;
 	};
 
 } /* namespace nezumi */
