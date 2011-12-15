@@ -12,7 +12,7 @@
 /* RFA 7.2 */
 #include <rfa.hh>
 
-#include "nezumi.hh"
+#include "config.hh"
 
 namespace logging
 {

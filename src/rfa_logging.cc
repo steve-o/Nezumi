@@ -11,6 +11,9 @@
 /* RFA 7.2 headers */
 #include <rfa.hh>
 
+#include "rfa.hh"
+#include "logging.hh"
+
 using rfa::common::RFA_String;
 
 /* 9.2.1 Configuring the Logger Package
