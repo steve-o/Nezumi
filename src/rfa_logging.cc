@@ -64,7 +64,7 @@ logging::LogEventProvider::Register()
  */
 	rfa::logger::AppLoggerInterestSpec log_spec;
 	log_spec.setMinSeverity (rfa::common::Success);
-	handle_ = monitor_->registerLoggerClient (	event_queue_, log_spec, *this, nullptr /* unused closure */);
+	handle_ = monitor_->registerLoggerClient (event_queue_, log_spec, *this, nullptr /* unused closure */);
 	assert (nullptr != handle_);
 
 	return true;

@@ -9,10 +9,6 @@
 /* RFA 7.2 headers */
 #include <rfa.hh>
 
-/* RFA 7.2 additional library */
-
-#include <StarterCommon/Encoder.h>
-
 #include "error.hh"
 
 /* RDM Usage Guide: Section 6.5: Enterprise Platform
@@ -75,12 +71,6 @@ nezumi::nezumi_t::run (
 		provider_ = new provider_t (config_, *rfa, *event_queue_);
 		if (nullptr == provider_ || !provider_->init())
 			goto cleanup;
-
-		{
-			char buffer[1024];
-			sprintf (buffer, "1/token address is %p", &msft_stream_.token);
-			LOG(INFO) << buffer;
-		}
 
 /* Create state for published RIC. */
 		static const char* msft = "MSFT.O";
