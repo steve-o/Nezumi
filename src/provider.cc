@@ -7,6 +7,7 @@
 
 #include "provider.hh"
 
+#include <algorithm>
 #include <utility>
 
 /* RFA 7.2 headers */
@@ -90,11 +91,9 @@ nezumi::provider_t::sendLoginRequest()
 	request.setInteractionType (rfa::message::ReqMsg::InitialImageFlag | rfa::message::ReqMsg::InterestAfterRefreshFlag);
 
 	rfa::message::AttribInfo attribInfo;
-	{
-		attribInfo.setNameType (rfa::rdm::USER_NAME);
-		const RFA_String userName (config_.user_name.c_str(), 0, false);
-		attribInfo.setName (userName);
-	}
+	attribInfo.setNameType (rfa::rdm::USER_NAME);
+	const RFA_String userName (config_.user_name.c_str(), 0, false);
+	attribInfo.setName (userName);
 
 /* The request attributes ApplicationID and Position are encoded as an
  * ElementList (5.3.4).
@@ -109,10 +108,8 @@ nezumi::provider_t::sendLoginRequest()
 	rfa::data::ElementEntry element;
 	element.setName (rfa::rdm::ENAME_APP_ID);
 	rfa::data::DataBuffer elementData;
-	{
-		const RFA_String applicationId (config_.application_id.c_str(), 0, false);
-		elementData.setFromString (applicationId, rfa::data::DataBuffer::StringAsciiEnum);
-	}
+	const RFA_String applicationId (config_.application_id.c_str(), 0, false);
+	elementData.setFromString (applicationId, rfa::data::DataBuffer::StringAsciiEnum);
 	element.setData (elementData);
 	it.bind (element);
 
@@ -120,10 +117,8 @@ nezumi::provider_t::sendLoginRequest()
  * e.g. "localhost"
  */
 	element.setName (rfa::rdm::ENAME_POSITION);
-	{
-		const RFA_String position (config_.position.c_str(), 0, false);
-		elementData.setFromString (position, rfa::data::DataBuffer::StringAsciiEnum);
-	}
+	const RFA_String position (config_.position.c_str(), 0, false);
+	elementData.setFromString (position, rfa::data::DataBuffer::StringAsciiEnum);
 	element.setData (elementData);
 	it.bind (element);
 
@@ -350,7 +345,7 @@ nezumi::provider_t::processLoginSuccess (
  * Immediately after a successful login, and before publishing data, a non-
  * interactive provider must publish a service directory that indicates
  * services and capabilities associated with the non-interactive provider and
- * includes information about supported domain types, the service�s state, QoS,
+ * includes information about supported domain types, the service’s state, QoS,
  * and any item group information associated with the service.
  */
 bool
@@ -634,15 +629,15 @@ nezumi::provider_t::resetTokens()
 	LOG(INFO) << "Resetting " << directory_.size() << " provider tokens";
 	unsigned i = 0;
 	assert (nullptr != provider_);
-	for (auto cit = directory_.begin();
-		cit != directory_.end();
-		++cit)
+/* Cannot use std::for_each (auto λ) due to language limitations. */
+	std::for_each (directory_.begin(), directory_.end(),
+		[&](std::pair<std::string, item_stream_t*> it)
 	{
-		LOG(INFO) << "Token #" << ++i << ": " << cit->first;
-		assert (nullptr != cit->second);
-		cit->second->token = &( provider_->generateItemToken() );
-		assert (nullptr != cit->second->token);
-	}
+		LOG(INFO) << "Token #" << ++i << ": " << it.first;
+		assert (nullptr != it.second);
+		it.second->token = &( provider_->generateItemToken() );
+		assert (nullptr != it.second->token);
+	});
 	return true;
 }
 
