@@ -7,8 +7,7 @@
 #pragma once
 
 #include <cstdint>
-#include <hash_map>
-#include <map>
+#include <unordered_map>
 
 /* Boost noncopyable base class */
 #include <boost/utility.hpp>
@@ -104,7 +103,7 @@ namespace nezumi
 		bool is_muted_;
 
 /* Container of all item streams keyed by symbol name. */
-		stdext::hash_map<const std::string, item_stream_t*> directory_;
+		std::unordered_map<std::string, item_stream_t*> directory_;
 	};
 
 } /* namespace nezumi */
