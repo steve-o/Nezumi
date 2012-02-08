@@ -8,11 +8,9 @@
 
 #include <cassert>
 
-/* RFA 7.2 headers */
-#include <rfa.hh>
-
+#include "chromium/logging.hh"
 #include "rfa.hh"
-#include "logging.hh"
+#include "rfaostream.hh"
 
 using rfa::common::RFA_String;
 
@@ -23,12 +21,10 @@ static const RFA_String kContextName ("RFA");
 
 logging::LogEventProvider::LogEventProvider (
 	const nezumi::config_t& config,
-	rfa::common::EventQueue& event_queue
+	std::shared_ptr<rfa::common::EventQueue> event_queue
 	) :
 	config_ (config),
 	event_queue_ (event_queue),
-	logger_ (nullptr),
-	monitor_ (nullptr),
 	handle_ (nullptr)
 {
 }
@@ -54,21 +50,24 @@ logging::LogEventProvider::Register()
  * The config database may be shared between other components, implying some form of
  * reference counting.
  */
-	logger_ = rfa::logger::ApplicationLogger::acquire (kContextName);
-	assert (nullptr != logger_);
+	logger_.reset (rfa::logger::ApplicationLogger::acquire (kContextName));
+	if (!(bool)logger_)
+		return false;
 
 /* 9.2.4.2 Initialize Application Logger Monitor. */
 	const RFA_String monitorName(config_.monitor_name.c_str(), 0, false);
-	monitor_ = logger_->createApplicationLoggerMonitor (monitorName, false /* no completion events */);
-	assert (nullptr != monitor_);
+	monitor_.reset (logger_->createApplicationLoggerMonitor (monitorName, false /* no completion events */));
+	if (!(bool)monitor_)
+		return false;
 
 /* 9.2.4.3 Registering for Log Events.
  * Setting minimum severity to "Success" is defined as everything.
  */
 	rfa::logger::AppLoggerInterestSpec log_spec;
 	log_spec.setMinSeverity (rfa::common::Success);
-	handle_ = monitor_->registerLoggerClient (event_queue_, log_spec, *this, nullptr /* unused closure */);
-	assert (nullptr != handle_);
+	handle_ = monitor_->registerLoggerClient (*event_queue_.get(), log_spec, *this, nullptr /* unused closure */);
+	if (nullptr == handle_)
+		return false;
 
 	return true;
 }
@@ -81,19 +80,13 @@ bool
 logging::LogEventProvider::Unregister()
 {
 /* 9.2.4.4 Closing an Event Stream for the Application Logger Monitor. */
-	if (nullptr != monitor_) {
-		if (nullptr != handle_) {
-			monitor_->unregisterLoggerClient (handle_);
-			handle_ = nullptr;
-		}
-		monitor_->destroy();
-		monitor_ = nullptr;
-	}
+	if (nullptr != handle_)
+		monitor_->unregisterLoggerClient (handle_), handle_ = nullptr;
+	if ((bool)monitor_)
+		monitor_.release();
 /* 9.2.3.2 Shutting down the application logger. */
-	if (nullptr != logger_) {
-		logger_->release ();
-		logger_ = nullptr;
-	}
+	if ((bool)logger_)
+		logger_.release();
 	return true;
 }
 

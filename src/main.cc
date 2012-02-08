@@ -1,8 +1,12 @@
 /* RFA 7.2 broadcast nee non-interactive provider.
  */
 
-#include <cstdlib>
 #include "nezumi.hh"
+
+#include <cstdlib>
+
+#include "chromium/command_line.hh"
+#include "chromium/logging.hh"
 
 int
 main (
@@ -15,8 +19,11 @@ main (
 	_set_abort_behavior (0, ~0);
 #endif
 
+	CommandLine::Init (argc, argv);
+	logging::InitLogging();
+
 	nezumi::nezumi_t nezumi;
-	return nezumi.run (argc, argv);
+	return nezumi.run();
 }
 
 /* eof */

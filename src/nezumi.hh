@@ -13,17 +13,18 @@
 
 #pragma once
 
+#include <cstdint>
+
 /* Boost noncopyable base class */
 #include <boost/utility.hpp>
 
 /* RFA 7.2 */
 #include <rfa.hh>
 
-/* RFA 7.2 additional library */
-#include <StarterCommon/Timer.h>
+/* Microsoft wrappers */
+#include "microsoft/timer.hh"
 
 #include "config.hh"
-#include "logging.hh"
 #include "rfa.hh"
 #include "rfa_logging.hh"
 #include "provider.hh"
@@ -31,8 +32,9 @@
 namespace nezumi
 {
 /* Basic example structure for application state of an item stream. */
-	struct broadcast_stream_t : item_stream_t
+	class broadcast_stream_t : public item_stream_t
 	{
+	public:
 		broadcast_stream_t () :
 			count (0)
 		{
@@ -42,7 +44,6 @@ namespace nezumi
 	};
 
 	class nezumi_t :
-		public TimerClient,
 		boost::noncopyable
 	{
 	public:
@@ -52,7 +53,10 @@ namespace nezumi
 /* Run the provider with the given command-line parameters.
  * Returns the error code to be returned by main().
  */
-		int run (int argc, const char* argv[]);
+		int run();
+		void clear();
+
+/* Configured period timer entry point. */
 		void processTimer (void* closure);
 
 	private:
@@ -64,22 +68,28 @@ namespace nezumi
 		bool sendRefresh() throw (rfa::common::InvalidUsageException);
 
 /* Application configuration. */
-		const config_t config_;
+		config_t config_;
+
+/* RFA context. */
+		std::shared_ptr<rfa_t> rfa_;
 
 /* RFA asynchronous event queue. */
-		rfa::common::EventQueue* event_queue_;
+		std::shared_ptr<rfa::common::EventQueue> event_queue_;
+
+/* RFA logging */
+		std::shared_ptr<logging::LogEventProvider> log_;
 
 /* RFA provider */
-		provider_t* provider_;
+		std::shared_ptr<provider_t> provider_;
 	
-/* Starter Common timer queue. */
-		Timer* timer_;
-
 /* Item stream. */
-		broadcast_stream_t msft_stream_;
+		std::shared_ptr<broadcast_stream_t> msft_stream_;
 
 /* Publish fields. */
 		rfa::data::FieldList fields_;
+
+/* Threadpool timer. */
+		ms::timer timer_;
 	};
 
 } /* namespace nezumi */

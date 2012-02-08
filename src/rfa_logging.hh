@@ -13,6 +13,7 @@
 #include <rfa.hh>
 
 #include "config.hh"
+#include "deleter.hh"
 
 namespace logging
 {
@@ -22,7 +23,7 @@ namespace logging
 		boost::noncopyable
 	{
 	public:
-		LogEventProvider (const nezumi::config_t& config, rfa::common::EventQueue& event_queue);
+		LogEventProvider (const nezumi::config_t& config, std::shared_ptr<rfa::common::EventQueue> event_queue);
 		~LogEventProvider ();
 
 		bool Register () throw (rfa::common::InvalidUsageException, rfa::common::InvalidConfigurationException);
@@ -38,13 +39,13 @@ namespace logging
 		const nezumi::config_t& config_;
 
 /* RFA event queue. */
-		rfa::common::EventQueue& event_queue_;
+		std::shared_ptr<rfa::common::EventQueue> event_queue_;
 
 /* RFA "application logger", a logging transport. */
-		rfa::logger::ApplicationLogger*	logger_;
+		std::unique_ptr<rfa::logger::ApplicationLogger, internal::release_deleter> logger_;
 
 /* RFA "application logger monitor", an RFA event source. */
-		rfa::logger::AppLoggerMonitor* monitor_;
+		std::unique_ptr<rfa::logger::AppLoggerMonitor, internal::destroy_deleter> monitor_;
 
 /* RFA log event consumer. */
 		rfa::common::Handle* handle_;

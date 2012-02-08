@@ -8,8 +8,11 @@ project (Nezumi)
 
 set(RFA_ROOT C:/rfa7.2.0.L1.win-shared.rrg)
 set(BOOST_ROOT C:/boost_1_48_0)
+set(BOOST_LIBRARYDIR ${BOOST_ROOT}/stage/lib)
 
-find_package (Boost 1.44 REQUIRED)
+set(Boost_USE_STATIC_LIBS ON)
+
+find_package (Boost 1.44 COMPONENTS thread REQUIRED)
 
 #-----------------------------------------------------------------------------
 # force off-tree build
@@ -41,6 +44,10 @@ set(LIBRARY_OUTPUT_PATH  ${CMAKE_BINARY_DIR}/lib)
 # platform specifics
 
 add_definitions(
+	-DWIN32
+	-DWIN32_LEAN_AND_MEAN
+# Windows Server 2008 (not-R2)
+	-D_WIN32_WINNT=0x0600
 )
 
 #-----------------------------------------------------------------------------
@@ -49,26 +56,35 @@ add_definitions(
 set(cxx-sources
 	src/config.cc
 	src/error.cc
-	src/lock_impl_win.cc
-	src/logging.cc
 	src/main.cc
 	src/nezumi.cc
 	src/provider.cc
 	src/rfa.cc
 	src/rfa_logging.cc
-	${RFA_ROOT}/Examples/StarterCommon/Timer.cpp
+	src/chromium/chromium_switches.cc
+	src/chromium/command_line.cc
+	src/chromium/debug/stack_trace.cc
+	src/chromium/debug/stack_trace_win.cc
+	src/chromium/memory/singleton.cc
+	src/chromium/logging.cc
+	src/chromium/string_piece.cc
+	src/chromium/string_split.cc
+	src/chromium/string_util.cc
+	src/chromium/synchronization/lock.cc
+	src/chromium/synchronization/lock_impl_win.cc
+	src/chromium/vlog.cc
 )
 
 include_directories(
 	include
 	${RFA_ROOT}/Include
 	${RFA_ROOT}/Include/rwf
-	${RFA_ROOT}/Examples
 	${Boost_INCLUDE_DIRS}
 )
 
 link_directories(
 	${RFA_ROOT}/Libs/WIN_64_VS100/Release_MD
+	${Boost_LIBRARY_DIRS}
 )
 
 #-----------------------------------------------------------------------------
@@ -84,7 +100,9 @@ target_link_libraries(Nezumi
 	RFA7_Connections100_x64.lib
 	RFA7_Connections_OMM100_x64.lib
 	RFA7_SessionLayer100_x64.lib
+	${Boost_LIBRARIES}
 	ws2_32.lib
+	dbghelp.lib
 )
 
 # end of file

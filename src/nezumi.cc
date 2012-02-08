@@ -1,15 +1,15 @@
-/* Velocity Analytics RDM publisher plugin.
+/* Non-interactive RDM publisher application.
  */
 
 #include "nezumi.hh"
 
-/* Windows SDK */
-#include <windows.h>
+#define __STDC_FORMAT_MACROS
+#include <cstdint>
+#include <inttypes.h>
 
-/* RFA 7.2 headers */
-#include <rfa.hh>
-
+#include "chromium/logging.hh"
 #include "error.hh"
+#include "rfaostream.hh"
 
 /* RDM Usage Guide: Section 6.5: Enterprise Platform
  * For future compatibility, the DictionaryId should be set to 1 by providers.
@@ -26,60 +26,70 @@ static const int kRdmTradePriceId = 6;		/* TRDPRC_1 */
 
 using rfa::common::RFA_String;
 
-static bool isShutdown = false;
+static std::weak_ptr<rfa::common::EventQueue> g_event_queue;
 
-nezumi::nezumi_t::nezumi_t() :
-	event_queue_ (nullptr),
-	provider_ (nullptr),
-	timer_ (nullptr)
+static
+void
+on_timer (
+	PTP_CALLBACK_INSTANCE Instance,
+	PVOID Context,
+	PTP_TIMER Timer
+	)
+{
+	nezumi::nezumi_t* nezumi = static_cast<nezumi::nezumi_t*>(Context);
+	nezumi->processTimer (nullptr);
+}
+
+nezumi::nezumi_t::nezumi_t()
 {
 }
 
 nezumi::nezumi_t::~nezumi_t()
 {
+	clear();
 }
 
 int
-nezumi::nezumi_t::run (
-	int		argc,
-	const char*	argv[]
-	)
+nezumi::nezumi_t::run ()
 {
-	rfa_t* rfa = nullptr;
-	logging::LogEventProvider* log = nullptr;
-
 	LOG(INFO) << config_;
 
 	try {
 /* RFA context. */
-		rfa = new rfa_t (config_);
-		if (nullptr == rfa || !rfa->init())
+		rfa_.reset (new rfa_t (config_));
+		if (!(bool)rfa_ || !rfa_->init())
 			goto cleanup;
 
 /* RFA asynchronous event queue. */
 		const RFA_String eventQueueName (config_.event_queue_name.c_str(), 0, false);
-		event_queue_ = rfa::common::EventQueue::create (eventQueueName);
-		if (nullptr == event_queue_)
+		event_queue_.reset (rfa::common::EventQueue::create (eventQueueName), std::mem_fun (&rfa::common::EventQueue::destroy));
+		if (!(bool)event_queue_)
 			goto cleanup;
+/* Create weak pointer to handle application shutdown. */
+		g_event_queue = event_queue_;
 
 /* RFA logging. */
-		log = new logging::LogEventProvider (config_, *event_queue_);
-		if (nullptr == log || !log->Register())
+		log_.reset (new logging::LogEventProvider (config_, event_queue_));
+		if (!(bool)log_ || !log_->Register())
 			goto cleanup;
 
 /* RFA provider. */
-		provider_ = new provider_t (config_, *rfa, *event_queue_);
-		if (nullptr == provider_ || !provider_->init())
+		provider_.reset (new provider_t (config_, rfa_, event_queue_));
+		if (!(bool)provider_ || !provider_->init())
 			goto cleanup;
 
 /* Create state for published RIC. */
-		static const char* msft = "MSFT.O";
-		if (!provider_->createItemStream (msft, msft_stream_))
+		static const std::string msft ("MSFT.O");
+		auto stream = std::make_shared<broadcast_stream_t> ();
+		if (!(bool)stream)
 			goto cleanup;
+		if (!provider_->createItemStream (msft.c_str(), stream))
+			goto cleanup;
+		msft_stream_ = std::move (stream);
 
-/* RFA example timer queue. */
-		timer_ = new Timer();
-		if (nullptr == timer_)
+/* Microsoft threadpool timer. */
+		timer_.reset (CreateThreadpoolTimer (static_cast<PTP_TIMER_CALLBACK>(on_timer), this /* closure */, nullptr /* env */));
+		if (!(bool)timer_)
 			goto cleanup;
 
 	} catch (rfa::common::InvalidUsageException& e) {
@@ -100,16 +110,17 @@ nezumi::nezumi_t::run (
 
 /* Timer for demo periodic publishing of items.
  */
-	timer_->addTimerClient (*this, 1000 /* ms */, true);
+	DWORD msPeriod = 1000;
+	SetThreadpoolTimer (timer_.get(), nullptr, msPeriod, 0);
+	LOG(INFO) << "Added periodic timer, interval " << msPeriod << "ms";
 
+	LOG(INFO) << "Init complete, entering main loop.";
 	mainLoop ();
 
-	event_queue_->deactivate();
-	event_queue_->destroy();
-	log->Unregister();
-
+	LOG(INFO) << "Main loop terminated.";
 	return EXIT_SUCCESS;
 cleanup:
+	LOG(INFO) << "Init failed.";
 	return EXIT_FAILURE;
 }
 
@@ -141,7 +152,11 @@ CtrlHandler (
 		message = "Caught shutdown event, shutting down";
 		break;
 	}
-	::isShutdown = true;
+/* if available, deactivate global event queue pointer to break running loop. */
+	if (!g_event_queue.expired()) {
+		auto sp = g_event_queue.lock();
+		sp->deactivate();
+	}
 	LOG(INFO) << message;
 	return TRUE;
 }
@@ -149,22 +164,22 @@ CtrlHandler (
 void
 nezumi::nezumi_t::mainLoop()
 {
-	LOG(INFO) << "Entering mainloop ...";
 /* Add shutdown handler. */
 	::SetConsoleCtrlHandler ((PHANDLER_ROUTINE)::CtrlHandler, TRUE);
-	while (!::isShutdown) {
-		const long nextTimerVal = timer_->nextTimer();
-		long timeOut = rfa::common::Dispatchable::NoWait;
-		if (INFINITE != nextTimerVal) {
-			if (nextTimerVal <= Timer_MinimumInterval)
-				timer_->processExpiredTimers();
-			timeOut = nextTimerVal;
-		}
-		while (event_queue_->dispatch (timeOut) > rfa::common::Dispatchable::NothingDispatched);
+	while (event_queue_->isActive()) {
+		event_queue_->dispatch (rfa::common::Dispatchable::InfiniteWait);
 	}
 /* Remove shutdown handler. */
 	::SetConsoleCtrlHandler ((PHANDLER_ROUTINE)::CtrlHandler, FALSE);
-	LOG(INFO) << "Mainloop terminated.";
+}
+
+void
+nezumi::nezumi_t::clear()
+{
+/* Stop generating new events. */
+	if (timer_)
+		SetThreadpoolTimer (timer_.get(), nullptr, 0, 0);
+	timer_.release();
 }
 
 void
@@ -186,21 +201,21 @@ bool
 nezumi::nezumi_t::sendRefresh()
 {
 /* 7.5.9.1 Create a response message (4.2.2) */
-	rfa::message::RespMsg response;
+	rfa::message::RespMsg response (false);	/* reference */
 
 /* 7.5.9.2 Set the message model type of the response. */
 	response.setMsgModelType (rfa::rdm::MMT_MARKET_PRICE);
 /* 7.5.9.3 Set response type. */
 	response.setRespType (rfa::message::RespMsg::RefreshEnum);
-	response.setIndicationMask (response.getIndicationMask() | rfa::message::RespMsg::RefreshCompleteFlag);
+	response.setIndicationMask (rfa::message::RespMsg::RefreshCompleteFlag);
 /* 7.5.9.4 Set the response type enumation. */
 	response.setRespTypeNum (rfa::rdm::REFRESH_UNSOLICITED);
 
 /* 7.5.9.5 Create or re-use a request attribute object (4.2.4) */
-	rfa::message::AttribInfo attribInfo;
+	rfa::message::AttribInfo attribInfo (false);	/* reference */
 	attribInfo.setNameType (rfa::rdm::INSTRUMENT_NAME_RIC);
-	RFA_String service_name (config_.service_name.c_str(), 0, false);
-	attribInfo.setName (msft_stream_.name);
+	RFA_String service_name (config_.service_name.c_str(), 0, false);	/* reference */
+	attribInfo.setName (msft_stream_->rfa_name);
 	attribInfo.setServiceName (service_name);
 	response.setAttribInfo (attribInfo);
 
@@ -237,7 +252,7 @@ nezumi::nezumi_t::sendRefresh()
 		it.bind (field);
 
 		field.setFieldID (kRdmTradePriceId);
-		real64.setValue (++msft_stream_.count);
+		real64.setValue (++msft_stream_->count);
 		real64.setMagnitudeType (rfa::data::ExponentNeg2);
 		dataBuffer.setReal64 (real64);
 		it.bind (field);
@@ -270,8 +285,8 @@ nezumi::nezumi_t::sendRefresh()
 	}
 #endif
 
-	provider_->send (msft_stream_, static_cast<rfa::common::Msg&> (response));
-	LOG(INFO) << "sent";
+	provider_->send (*msft_stream_.get(), static_cast<rfa::common::Msg&> (response));
+	LOG(INFO) << "Sent refresh.";
 	return true;
 }
 

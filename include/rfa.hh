@@ -8,6 +8,8 @@
 #include <Common/Context.h>
 #include <Common/EventQueue.h>
 #include <Common/RFA_String.h>
+#include <Common/StandardPrincipalIdentity.h>
+#include <Common/TokenizedPrincipalIdentity.h>
 #include <Config/Config.h>
 #include <Config/ConfigDatabase.h>
 #include <Config/ConfigTree.h>

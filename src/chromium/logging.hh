@@ -1,9 +1,9 @@
-/* Macros for logging.
- */
+// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
 
-#ifndef __LOGGING_HH__
-#define __LOGGING_HH__
-
+#ifndef CHROMIUM_LOGGING_HH__
+#define CHROMIUM_LOGGING_HH__
 #pragma once
 
 #include <sstream>
@@ -88,8 +88,45 @@
 
 namespace logging {
 
+// Define different names for the ChromiumInitLoggingImpl() function depending on
+// whether NDEBUG is defined or not so that we'll fail to link if someone tries
+// to compile logging.cc with NDEBUG but includes logging.h without defining it,
+// or vice versa.
+#if NDEBUG
+#define ChromiumInitLoggingImpl ChromiumInitLoggingImpl_built_with_NDEBUG
+#else
+#define ChromiumInitLoggingImpl ChromiumInitLoggingImpl_built_without_NDEBUG
+#endif
+
+// Implementation of the InitLogging() method declared below.  We use a
+// more-specific name so we can #define it above without affecting other code
+// that has named stuff "InitLogging".
+bool ChromiumInitLoggingImpl();
+
+// Sets the global logging state. Calling this function
+// is recommended, and is normally done at the beginning of application init.
+// If you don't call it, all the flags will be initialized to their default
+// values, and there is a race condition that may leak a critical section
+// object if two threads try to do the first log at the same time.
+// See the definition of the enums above for descriptions and default values.
+//
+// This function may be called a second time to re-direct logging (e.g after
+// loging in to a user partition), however it should never be called more than
+// twice.
+inline bool InitLogging() {
+  return ChromiumInitLoggingImpl();
+}
+
 	void SetMinLogLevel (int level);
 	int GetMinLogLevel();
+
+	int GetVlogVerbosity();
+	int GetVlogLevelHelper (const char* file_start, size_t N);
+
+	template <size_t N>
+	int GetVlogLevel (const char (&file)[N]) {
+		return GetVlogLevelHelper (file, N);
+	}
 
 	typedef int LogSeverity;
 	const LogSeverity LOG_VERBOSE = -1;
@@ -310,6 +347,8 @@ namespace logging {
 	#define DLOG(severity)                                          \
 		LAZY_STREAM(LOG_STREAM(severity), DLOG_IS_ON(severity))
 
+	#define DVLOG(verboselevel) DVLOG_IF(verboselevel, VLOG_IS_ON(verboselevel))
+
 /* Definitions for DCHECK et al. */
 
 	#if ENABLE_DCHECK
@@ -523,6 +562,6 @@ namespace logging {
 		} while(0)
 #endif
 
-#endif /* __LOGGING_HH__ */
+#endif /* CHROMIUM_LOGGING_HH__ */
 
 /* eof */

@@ -10,11 +10,11 @@
 #include <algorithm>
 #include <utility>
 
-/* RFA 7.2 headers */
-#include <rfa.hh>
+#include <windows.h>
 
+#include "chromium/logging.hh"
 #include "error.hh"
-#include "logging.hh"
+#include "rfaostream.hh"
 
 using rfa::common::RFA_String;
 
@@ -29,24 +29,30 @@ static const RFA_String kEnumTypeDictionaryName ("RWFEnum");
 
 nezumi::provider_t::provider_t (
 	const nezumi::config_t& config,
-	nezumi::rfa_t& rfa,
-	rfa::common::EventQueue& event_queue
+	std::shared_ptr<nezumi::rfa_t> rfa,
+	std::shared_ptr<rfa::common::EventQueue> event_queue
 	) :
 	config_ (config),
 	rfa_ (rfa),
 	event_queue_ (event_queue),
-	session_ (nullptr),
-	provider_ (nullptr),
+	error_item_handle_ (nullptr),
+	item_handle_ (nullptr),
 	rwf_major_version_ (0),
 	rwf_minor_version_ (0),
 	is_muted_ (true)
 {
+	ZeroMemory (cumulative_stats_, sizeof (cumulative_stats_));
+	ZeroMemory (snap_stats_, sizeof (snap_stats_));
 }
 
 nezumi::provider_t::~provider_t()
 {
-	if (nullptr != provider_)
-		provider_->destroy();
+	if (nullptr != item_handle_)
+		provider_->unregisterClient (item_handle_), item_handle_ = nullptr;
+	if (nullptr != error_item_handle_)
+		provider_->unregisterClient (error_item_handle_), error_item_handle_ = nullptr;
+	provider_.release();
+	session_.release();
 }
 
 bool
@@ -55,8 +61,9 @@ nezumi::provider_t::init()
 /* 7.2.1 Configuring the Session Layer Package.
  */
 	const RFA_String sessionName (config_.session_name.c_str(), 0, false);
-	session_ = rfa::sessionLayer::Session::acquire (sessionName);
-	assert (nullptr != session_);
+	session_.reset (rfa::sessionLayer::Session::acquire (sessionName));
+	if (!(bool)session_)
+		return false;
 
 /* 6.2.2.1 RFA Version Info.  The version is only available if an application
  * has acquired a Session (i.e., the Session Layer library is loaded).
@@ -65,15 +72,15 @@ nezumi::provider_t::init()
 
 /* 7.5.6 Initializing an OMM Non-Interactive Provider. */
 	const RFA_String publisherName (config_.publisher_name.c_str(), 0, false);
-	provider_ = session_->createOMMProvider (publisherName, nullptr);
-	if (nullptr == provider_)
+	provider_.reset (session_->createOMMProvider (publisherName, nullptr));
+	if (!(bool)provider_)
 		return false;
 
 /* 7.5.7 Registering for Events from an OMM Non-Interactive Provider. */
 /* receive error events (OMMCmdErrorEvent) related to calls to submit(). */
 	rfa::sessionLayer::OMMErrorIntSpec ommErrorIntSpec;
-	rfa::common::Handle* handle = provider_->registerClient (&event_queue_, &ommErrorIntSpec, *this, nullptr /* closure */);
-	if (nullptr == handle)
+	error_item_handle_ = provider_->registerClient (event_queue_.get(), &ommErrorIntSpec, *this, nullptr /* closure */);
+	if (nullptr == error_item_handle_)
 		return false;
 
 	return sendLoginRequest();
@@ -159,13 +166,14 @@ nezumi::provider_t::sendLoginRequest()
  */
 	rfa::sessionLayer::OMMItemIntSpec ommItemIntSpec;
 	ommItemIntSpec.setMsg (&request);
-	rfa::common::Handle* handle = provider_->registerClient (&event_queue_, &ommItemIntSpec, *this, nullptr /* closure */);
-	if (nullptr == handle)
+	item_handle_ = provider_->registerClient (event_queue_.get(), &ommItemIntSpec, *this, nullptr /* closure */);
+	cumulative_stats_[PROVIDER_PC_MMT_LOGIN_SENT]++;
+	if (nullptr == item_handle_)
 		return false;
 
 /* Store negotiated Reuters Wire Format version information. */
 	rfa::data::Map map;
-	map.setAssociatedMetaInfo (*handle);
+	map.setAssociatedMetaInfo (*item_handle_);
 	rwf_major_version_ = map.getMajorVersion();
 	rwf_minor_version_ = map.getMinorVersion();
 	LOG(INFO) << "RWF: { MajorVersion: " << (unsigned)rwf_major_version_
@@ -179,23 +187,24 @@ nezumi::provider_t::sendLoginRequest()
 bool
 nezumi::provider_t::createItemStream (
 	const char* name,
-	item_stream_t& item_stream
+	std::shared_ptr<item_stream_t> item_stream
 	)
 {
-	item_stream.name.set (name, 0, true);
+	item_stream->rfa_name.set (name, 0, true);
 	if (!is_muted_) {
-		LOG(INFO) << "Generating token for " << name;
-		item_stream.token = &( provider_->generateItemToken() );
-		assert (nullptr != item_stream.token);
+		DLOG(INFO) << "Generating token for " << name;
+		item_stream->token = &( provider_->generateItemToken() );
+		assert (nullptr != item_stream->token);
+		cumulative_stats_[PROVIDER_PC_TOKENS_GENERATED]++;
 	} else {
-		LOG(INFO) << "Not generating token for " << name << " as provider is muted.";
-		assert (nullptr == item_stream.token);
+		DLOG(INFO) << "Not generating token for " << name << " as provider is muted.";
+		assert (nullptr == item_stream->token);
 	}
 	const std::string key (name);
-	auto status = directory_.insert (std::make_pair (key, &item_stream));
+	auto status = directory_.emplace (std::make_pair (key, item_stream));
 	assert (true == status.second);
 	assert (directory_.end() != directory_.find (key));
-	LOG(INFO) << "Directory size: " << directory_.size();
+	DLOG(INFO) << "Directory size: " << directory_.size();
 	return true;
 }
 
@@ -212,6 +221,7 @@ nezumi::provider_t::send (
 		return false;
 	assert (nullptr != item_stream.token);
 	submit (msg, *item_stream.token);
+	cumulative_stats_[PROVIDER_PC_RFA_MSGS_SENT]++;
 	return true;
 }
 
@@ -242,6 +252,8 @@ nezumi::provider_t::processEvent (
 	const rfa::common::Event& event_
 	)
 {
+	VLOG(1) << event_;
+	cumulative_stats_[PROVIDER_PC_RFA_EVENTS_RECEIVED]++;
 	switch (event_.getType()) {
 	case rfa::sessionLayer::OMMItemEventEnum:
 		processOMMItemEvent (static_cast<const rfa::sessionLayer::OMMItemEvent&>(event_));
@@ -252,7 +264,8 @@ nezumi::provider_t::processEvent (
                 break;
 
         default:
-		LOG(INFO) << "Uncaught: " << event_;
+		cumulative_stats_[PROVIDER_PC_RFA_EVENTS_DISCARDED]++;
+		LOG(WARNING) << "Uncaught: " << event_;
                 break;
         }
 }
@@ -264,11 +277,13 @@ nezumi::provider_t::processOMMItemEvent (
 	const rfa::sessionLayer::OMMItemEvent&	item_event
 	)
 {
+	cumulative_stats_[PROVIDER_PC_OMM_ITEM_EVENTS_RECEIVED]++;
 	const rfa::common::Msg& msg = item_event.getMsg();
 
 /* Verify event is a response event */
 	if (rfa::message::RespMsgEnum != msg.getMsgType()) {
-		LOG(INFO) << "Uncaught: " << msg;
+		cumulative_stats_[PROVIDER_PC_OMM_ITEM_EVENTS_DISCARDED]++;
+		LOG(WARNING) << "Uncaught: " << msg;
 		return;
 	}
 
@@ -280,17 +295,24 @@ nezumi::provider_t::processRespMsg (
 	const rfa::message::RespMsg&	reply_msg
 	)
 {
+	cumulative_stats_[PROVIDER_PC_RESPONSE_MSGS_RECEIVED]++;
 /* Verify event is a login response event */
 	if (rfa::rdm::MMT_LOGIN != reply_msg.getMsgModelType()) {
-		LOG(INFO) << "Uncaught: " << reply_msg;
+		cumulative_stats_[PROVIDER_PC_RESPONSE_MSGS_DISCARDED]++;
+		LOG(WARNING) << "Uncaught: " << reply_msg;
 		return;
 	}
 
+	cumulative_stats_[PROVIDER_PC_MMT_LOGIN_RESPONSE_RECEIVED]++;
 	const rfa::common::RespStatus& respStatus = reply_msg.getRespStatus();
 
-	switch (respStatus.getStreamState()) {
+/* save state */
+	stream_state_ = respStatus.getStreamState();
+	data_state_   = respStatus.getDataState();
+
+	switch (stream_state_) {
 	case rfa::common::RespStatus::OpenEnum:
-		switch (respStatus.getDataState()) {
+		switch (data_state_) {
 		case rfa::common::RespStatus::OkEnum:
 			processLoginSuccess (reply_msg);
 			break;
@@ -300,7 +322,8 @@ nezumi::provider_t::processRespMsg (
 			break;
 
 		default:
-			LOG(INFO) << "Uncaught: " << reply_msg;
+			cumulative_stats_[PROVIDER_PC_MMT_LOGIN_RESPONSE_DISCARDED]++;
+			LOG(WARNING) << "Uncaught: " << reply_msg;
 			break;
 		}
 		break;
@@ -310,7 +333,8 @@ nezumi::provider_t::processRespMsg (
 		break;
 
 	default:
-		LOG(INFO) << "Uncaught: " << reply_msg;
+		cumulative_stats_[PROVIDER_PC_MMT_LOGIN_RESPONSE_DISCARDED]++;
+		LOG(WARNING) << "Uncaught: " << reply_msg;
 		break;
 	}
 }
@@ -326,6 +350,7 @@ nezumi::provider_t::processLoginSuccess (
 	const rfa::message::RespMsg&			login_msg
 	)
 {
+	cumulative_stats_[PROVIDER_PC_MMT_LOGIN_SUCCESS_RECEIVED]++;
 	try {
 		sendDirectoryResponse();
 		resetTokens();
@@ -334,7 +359,7 @@ nezumi::provider_t::processLoginSuccess (
 
 /* ignore any error */
 	} catch (rfa::common::InvalidUsageException& e) {
-		LOG(ERROR) << "MMT_DIRECTORY::validateMsg: { StatusText: \"" << e.getStatus().getStatusText() << "\" }";
+		LOG(ERROR) << "MMT_DIRECTORY::InvalidUsageException: { StatusText: \"" << e.getStatus().getStatusText() << "\" }";
 /* cannot publish until directory is sent. */
 		return;
 	}
@@ -410,13 +435,16 @@ nezumi::provider_t::sendDirectoryResponse()
 	RFA_String warningText;
 	uint8_t validation_status = response.validateMsg (&warningText);
 	if (rfa::message::MsgValidationWarning == validation_status) {
+		cumulative_stats_[PROVIDER_PC_MMT_DIRECTORY_VALIDATED]++;
 		LOG(WARNING) << "MMT_DIRECTORY::validateMsg: { warningText: \"" << warningText << "\" }";
 	} else {
+		cumulative_stats_[PROVIDER_PC_MMT_DIRECTORY_MALFORMED]++;
 		assert (rfa::message::MsgValidationOk == validation_status);
 	}
 
 /* Create and throw away first token for MMT_DIRECTORY. */
 	submit (static_cast<rfa::common::Msg&> (response), provider_->generateItemToken());
+	cumulative_stats_[PROVIDER_PC_MMT_DIRECTORY_SENT]++;
 	return true;
 }
 
@@ -626,17 +654,21 @@ nezumi::provider_t::getServiceState (
 bool
 nezumi::provider_t::resetTokens()
 {
-	LOG(INFO) << "Resetting " << directory_.size() << " provider tokens";
-	unsigned i = 0;
-	assert (nullptr != provider_);
+	if (!(bool)provider_) {
+		LOG(WARNING) << "Reset tokens whilst provider is invalid.";
+		return false;
+	}
+
+	LOG(INFO) << "Resetting " << directory_.size() << " provider tokens.";
 /* Cannot use std::for_each (auto λ) due to language limitations. */
 	std::for_each (directory_.begin(), directory_.end(),
-		[&](std::pair<std::string, item_stream_t*> it)
+		[&](std::pair<std::string, std::weak_ptr<item_stream_t>> it)
 	{
-		LOG(INFO) << "Token #" << ++i << ": " << it.first;
-		assert (nullptr != it.second);
-		it.second->token = &( provider_->generateItemToken() );
-		assert (nullptr != it.second->token);
+		if (auto sp = it.second.lock()) {
+			sp->token = &( provider_->generateItemToken() );
+			assert (nullptr != sp->token);
+			cumulative_stats_[PROVIDER_PC_TOKENS_GENERATED]++;
+		}
 	});
 	return true;
 }
@@ -650,6 +682,7 @@ nezumi::provider_t::processLoginSuspect (
 	const rfa::message::RespMsg&			suspect_msg
 	)
 {
+	cumulative_stats_[PROVIDER_PC_MMT_LOGIN_SUSPECT_RECEIVED]++;
 	is_muted_ = true;
 }
 
@@ -663,6 +696,7 @@ nezumi::provider_t::processLoginClosed (
 	const rfa::message::RespMsg&			logout_msg
 	)
 {
+	cumulative_stats_[PROVIDER_PC_MMT_LOGIN_CLOSED_RECEIVED]++;
 	is_muted_ = true;
 }
 
@@ -677,6 +711,7 @@ nezumi::provider_t::processOMMCmdErrorEvent (
 	const rfa::sessionLayer::OMMCmdErrorEvent& error
 	)
 {
+	cumulative_stats_[PROVIDER_PC_OMM_CMD_ERRORS]++;
 	LOG(ERROR) << "OMMCmdErrorEvent: { "
 		"CmdId: " << error.getCmdID() <<
 		", State: " << error.getStatus().getState() <<
