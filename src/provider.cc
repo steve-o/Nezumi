@@ -150,11 +150,13 @@ nezumi::provider_t::sendLoginRequest()
  * Models as specified in RFA API 7 RDM Usage Guide.
  */
 	RFA_String warningText;
-	uint8_t validation_status = request.validateMsg (&warningText);
+	const uint8_t validation_status = request.validateMsg (&warningText);
 	if (rfa::message::MsgValidationWarning == validation_status) {
 		LOG(WARNING) << "MMT_LOGIN::validateMsg: { warningText: \"" << warningText << "\" }";
+		cumulative_stats_[PROVIDER_PC_MMT_LOGIN_MALFORMED]++;
 	} else {
 		assert (rfa::message::MsgValidationOk == validation_status);
+		cumulative_stats_[PROVIDER_PC_MMT_LOGIN_VALIDATED]++;
 	}
 
 /* Not saving the returned handle as we will destroy the provider to logout,

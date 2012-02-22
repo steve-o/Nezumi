@@ -40,10 +40,7 @@ class CommandLine {
 
   ~CommandLine();
 
-  // Initialize the current process CommandLine singleton. On Windows, ignores
-  // its arguments (we instead parse GetCommandLineW() directly) because we
-  // don't trust the CRT's parsing of the command line, but it still must be
-  // called to set up the command line.
+  // Initialize the current process CommandLine singleton.
   static void Init(int argc, const char* const* argv);
 
   // Destroys the current process CommandLine singleton. This is necessary if
@@ -56,6 +53,8 @@ class CommandLine {
   // command line. Note: returned value is mutable, but not thread safe;
   // only mutate if you know what you're doing!
   static CommandLine* ForCurrentProcess();
+
+  static CommandLine FromString(const std::string& command_line);
 
   // Initialize from an argv vector.
   void InitFromArgv(int argc, const CharType* const* argv);
@@ -111,6 +110,10 @@ class CommandLine {
   // Insert a command before the current command.
   // Common for debuggers, like "valgrind" or "gdb --args".
   void PrependWrapper(const StringType& wrapper);
+
+  // Initialize by parsing the given command line string.
+  // The program name is assumed to be the first item in the string.
+  void ParseFromString(const std::string& command_line);
 
  private:
   // Disallow default constructor; a program name must be explicitly specified.

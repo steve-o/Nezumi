@@ -366,11 +366,11 @@ inline bool InitLogging() {
 	#		else
 
 	#			define COMPACT_LOG_EX_DCHECK(ClassName, ...) \
-					COMPACT_LOG_EX_ERROR_REPORT(ClassName , ##__VA_ARGS__)
-	#			define COMPACT_LOG_DCHECK COMPACT_LOG_ERROR_REPORT
+					COMPACT_LOG_EX_ERROR(ClassName , ##__VA_ARGS__)
+	#			define COMPACT_LOG_DCHECK COMPACT_LOG_ERROR
 	const LogSeverity LOG_DCHECK = LOG_ERROR;
 	#			define DCHECK_IS_ON() \
-					LOG_IS_ON(DCHECK))
+					LOG_IS_ON(DCHECK)
 
 	#		endif  /* defined(DCHECK_ALWAYS_ON) */
 

@@ -118,6 +118,13 @@ CommandLine* CommandLine::ForCurrentProcess() {
   return current_process_commandline_;
 }
 
+// static
+CommandLine CommandLine::FromString(const std::string& command_line) {
+  CommandLine cmd(NO_PROGRAM);
+  cmd.ParseFromString(command_line);
+  return cmd;
+}
+
 void CommandLine::InitFromArgv(int argc,
                                const CommandLine::CharType* const* argv) {
   StringVector new_argv;
@@ -241,3 +248,15 @@ void CommandLine::PrependWrapper(const CommandLine::StringType& wrapper) {
   begin_args_ += wrapper_argv.size();
 }
 
+void CommandLine::ParseFromString(const std::string& command_line) {
+  std::string command_line_string;
+  TrimWhitespace(command_line, TRIM_ALL, &command_line_string);
+  if (command_line_string.empty())
+    return;
+
+  StringVector args;
+  chromium::SplitString(command_line, ' ', &args);
+  InitFromArgv(args);
+}
+
+/* eof */
