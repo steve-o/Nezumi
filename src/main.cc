@@ -8,6 +8,21 @@
 #include "chromium/command_line.hh"
 #include "chromium/logging.hh"
 
+static
+bool
+log_handler (
+	int			severity,
+	const char*		file,
+	int			line,
+	size_t			message_start,
+	const std::string&	str
+	)
+{
+	fprintf (stdout, "%s", str.c_str());
+	fflush (stdout);
+	return true;
+}
+
 int
 main (
 	int		argc,
@@ -20,7 +35,14 @@ main (
 #endif
 
 	CommandLine::Init (argc, argv);
-	logging::InitLogging();
+	logging::InitLogging(
+		nullptr,
+		logging::LOG_NONE,
+		logging::DONT_LOCK_LOG_FILE,
+		logging::APPEND_TO_OLD_LOG_FILE,
+		logging::ENABLE_DCHECK_FOR_NON_OFFICIAL_RELEASE_BUILDS
+		);
+	logging::SetLogMessageHandler (log_handler);
 
 	nezumi::nezumi_t nezumi;
 	return nezumi.run();

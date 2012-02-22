@@ -23,6 +23,8 @@
 
 namespace logging {
 
+DcheckState g_dcheck_state = DISABLE_DCHECK_FOR_NON_OFFICIAL_RELEASE_BUILDS;
+
 namespace {
 
 VlogInfo* g_vlog_info = nullptr;
@@ -32,11 +34,29 @@ const char* const log_severity_names[LOG_NUM_SEVERITIES] = {
 
 int min_log_level = 0;
 
+// The default set here for logging_destination will only be used if
+// InitLogging is not called.
+LoggingDestination logging_destination = LOG_ONLY_TO_SYSTEM_DEBUG_LOG;
+
+// For LOG_ERROR and above, always print to stderr.
+const int kAlwaysPrintErrorLevel = LOG_ERROR;
+
+// Which log file to use? This is initialized by InitLogging or
+// will be lazily initialized to the default value when it is
+// first needed.
+std::string* log_file_name = NULL;
+
+// this file is lazily opened and the handle may be NULL
+HANDLE log_file = NULL;
+
 // what should be prepended to each message?
 bool log_process_id = false;
 bool log_thread_id = false;
 bool log_timestamp = false;
 bool log_tickcount = false;
+
+// A log message handler that gets notified of every log message we process.
+LogMessageHandlerFunction log_message_handler = NULL;
 
 // Helper functions to wrap platform differences.
 
@@ -50,6 +70,20 @@ int32_t CurrentThreadId() {
 
 uint64_t TickCount() {
 	return GetTickCount();
+}
+
+void CloseFile (HANDLE log) {
+	CloseHandle (log);
+}
+
+void DeleteFilePath (const std::string& log_name) {
+	DeleteFile (log_name.c_str());
+}
+
+std::string GetDefaultLogFile() {
+// On Windows we use the same path as the exe.
+	std::string log_file = "debug.log";
+	return log_file;
 }
 
 // This class acts as a wrapper for locking the logging files.
@@ -68,21 +102,47 @@ class LoggingLock {
     UnlockLogging();
   }
 
-  static void Init() {
+  static void Init(LogLockingState lock_log, const char* new_log_file) {
     if (is_initialized)
       return;
-    log_lock = new chromium::internal::LockImpl();
+    lock_log_file = lock_log;
+    if (lock_log_file == LOCK_LOG_FILE) {
+	    if (!log_mutex) {
+		    std::string safe_name;
+		    if (new_log_file)
+			    safe_name = new_log_file;
+		    else
+			    safe_name = GetDefaultLogFile();
+		    // \ is not a legal character in mutex names so we replace \ with /
+		    std::replace(safe_name.begin(), safe_name.end(), '\\', '/');
+		    std::string t("Global\\");
+		    t.append(safe_name);
+		    log_mutex = ::CreateMutex (NULL, FALSE, t.c_str());
+		    if (log_mutex == NULL)
+			    return;
+	    }
+    } else {
+	log_lock = new chromium::internal::LockImpl();
+    }
     is_initialized = true;
   }
 
  private:
   static void LockLogging() {
-      // use the lock
-      log_lock->Lock();
+      if (lock_log_file == LOCK_LOG_FILE) {
+        ::WaitForSingleObject (log_mutex, INFINITE);
+      } else {
+        // use the lock
+        log_lock->Lock();
+      }
   }
 
   static void UnlockLogging() {
-      log_lock->Unlock();
+      if (lock_log_file == LOCK_LOG_FILE) {
+        ReleaseMutex (log_mutex);
+      } else {
+        log_lock->Unlock();
+      }
   }
 
   // The lock is used if log file locking is false. It helps us avoid problems
@@ -90,19 +150,64 @@ class LoggingLock {
   // LockImpl directly instead of using Lock, because Lock makes logging calls.
   static chromium::internal::LockImpl* log_lock;
 
+  static HANDLE log_mutex;
+
   static bool is_initialized;
+  static LogLockingState lock_log_file;
 };
 
 // static
 bool LoggingLock::is_initialized = false;
 // static
 chromium::internal::LockImpl* LoggingLock::log_lock = NULL;
+// static
+LogLockingState LoggingLock::lock_log_file = LOCK_LOG_FILE;
+// static
+HANDLE LoggingLock::log_mutex = NULL;
+
+// Called by logging functions to ensure that debug_file is initialized
+// and can be used for writing. Returns false if the file could not be
+// initialized. debug_file will be NULL in this case.
+bool InitializeLogFileHandle() {
+  if (log_file)
+    return true;
+
+  if (!log_file_name) {
+    // Nobody has called InitLogging to specify a debug log file, so here we
+    // initialize the log file name to a default.
+    log_file_name = new std::string (GetDefaultLogFile());
+  }
+
+  if (logging_destination == LOG_ONLY_TO_FILE ||
+      logging_destination == LOG_TO_BOTH_FILE_AND_SYSTEM_DEBUG_LOG) {
+    log_file = CreateFile(log_file_name->c_str(), GENERIC_WRITE,
+                          FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                          OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (log_file == INVALID_HANDLE_VALUE || log_file == NULL) {
+      // try the current directory
+      log_file = CreateFile(".\\debug.log", GENERIC_WRITE,
+                            FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                            OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+      if (log_file == INVALID_HANDLE_VALUE || log_file == NULL) {
+        log_file = NULL;
+        return false;
+      }
+    }
+    SetFilePointer(log_file, 0, 0, FILE_END);
+  }
+
+  return true;
+}
 
 }  /* anonymous namespace */
 
-bool ChromiumInitLoggingImpl() {
-
+bool ChromiumInitLoggingImpl(const char* new_log_file,
+				LoggingDestination logging_dest,
+				LogLockingState lock_log,
+				OldFileDeletionState delete_old,
+				DcheckState dcheck_state) {
   CommandLine* command_line = CommandLine::ForCurrentProcess();
+  g_dcheck_state = dcheck_state;
 
   // Don't bother initializing g_vlog_info unless we use one of the
   // vlog switches.
@@ -114,11 +219,31 @@ bool ChromiumInitLoggingImpl() {
                      &min_log_level);
   }
 
-  LoggingLock::Init();
+  LoggingLock::Init(lock_log, new_log_file);
 
   LoggingLock logging_lock;
 
+  if (log_file) {
+    // calling InitLogging twice or after some log call has already opened the
+    // default log file will re-initialize to the new options
+    CloseFile (log_file);
+    log_file = NULL;
+  }
+
+  logging_destination = logging_dest;
+
+  // ignore file options if logging is disabled or only to system
+  if (logging_destination == LOG_NONE ||
+      logging_destination == LOG_ONLY_TO_SYSTEM_DEBUG_LOG)
     return true;
+
+  if (!log_file_name)
+    log_file_name = new std::string;
+  *log_file_name = new_log_file;
+  if (delete_old == DELETE_OLD_LOG_FILE)
+    DeleteFilePath (log_file_name->c_str());
+
+  return InitializeLogFileHandle();
 }
 
 void SetMinLogLevel(int level) {
@@ -149,6 +274,14 @@ void SetLogItems(bool enable_process_id, bool enable_thread_id,
   log_thread_id = enable_thread_id;
   log_timestamp = enable_timestamp;
   log_tickcount = enable_tickcount;
+}
+
+void SetLogMessageHandler(LogMessageHandlerFunction handler) {
+  log_message_handler = handler;
+}
+
+LogMessageHandlerFunction GetLogMessageHandler() {
+  return log_message_handler;
 }
 
 // MSVC doesn't like complex extern templates and DLLs.
@@ -202,8 +335,39 @@ LogMessage::~LogMessage() {
 	stream_ << std::endl;
 	std::string str_newline(stream_.str());
 
-	fprintf(stderr, "%s", str_newline.c_str());
-	fflush(stderr);
+// Give any log message handler first dibs on the message.
+	if (log_message_handler && log_message_handler(severity_, file_, line_, message_start_, str_newline)) {
+// The handler took care of it, no further processing.
+		return;
+	}
+
+	if (logging_destination == LOG_ONLY_TO_SYSTEM_DEBUG_LOG ||
+	    logging_destination == LOG_TO_BOTH_FILE_AND_SYSTEM_DEBUG_LOG) {
+	    OutputDebugStringA (str_newline.c_str());
+	    fprintf (stderr, "%s", str_newline.c_str());
+	    fflush (stderr);
+	} else if (severity_ >= kAlwaysPrintErrorLevel) {
+// When we're only outputting to a log file, above a certain log level, we
+// should still output to stderr so that we can better detect and diagnose
+// problems with unit tests, especially on the buildbots.
+		fprintf (stderr, "%s", str_newline.c_str());
+		fflush (stderr);
+	}
+
+	LoggingLock::Init (LOCK_LOG_FILE, NULL);
+	if (logging_destination != LOG_NONE &&
+	    logging_destination != LOG_ONLY_TO_SYSTEM_DEBUG_LOG) {
+		LoggingLock logging_lock;
+		if (InitializeLogFileHandle()) {
+			SetFilePointer (log_file, 0, 0, SEEK_END);
+			DWORD num_written;
+			WriteFile (log_file,
+				static_cast<const void*>(str_newline.c_str()),
+				static_cast<DWORD>(str_newline.length()),
+				&num_written,
+				NULL);
+		}
+	}
 }
 
 // writes the common header info to the stream
@@ -244,6 +408,8 @@ void LogMessage::Init(const char* file, int line) {
     stream_ << "VERBOSE" << -severity_;
 
   stream_ << ":" << filename << "(" << line << ")] ";
+
+  message_start_ = stream_.tellp();
 }
 
 }  /* namespace logging */

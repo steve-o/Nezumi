@@ -46,6 +46,7 @@ logging::LogEventProvider::~LogEventProvider()
 bool
 logging::LogEventProvider::Register()
 {
+	VLOG(2) << "Registering RFA log event provider.";
 /* 9.2.3.1 Initialize the Application logger.
  * The config database may be shared between other components, implying some form of
  * reference counting.
@@ -55,6 +56,7 @@ logging::LogEventProvider::Register()
 		return false;
 
 /* 9.2.4.2 Initialize Application Logger Monitor. */
+	VLOG(3) << "Creating RFA application logger monitor.";
 	const RFA_String monitorName(config_.monitor_name.c_str(), 0, false);
 	monitor_.reset (logger_->createApplicationLoggerMonitor (monitorName, false /* no completion events */));
 	if (!(bool)monitor_)
@@ -63,6 +65,7 @@ logging::LogEventProvider::Register()
 /* 9.2.4.3 Registering for Log Events.
  * Setting minimum severity to "Success" is defined as everything.
  */
+	VLOG(3) << "Registering RFA logger client.";
 	rfa::logger::AppLoggerInterestSpec log_spec;
 	log_spec.setMinSeverity (rfa::common::Success);
 	handle_ = monitor_->registerLoggerClient (*event_queue_.get(), log_spec, *this, nullptr /* unused closure */);
@@ -79,14 +82,13 @@ logging::LogEventProvider::Register()
 bool
 logging::LogEventProvider::Unregister()
 {
+	VLOG(2) << "Unregistering RFA log event provider.";
 /* 9.2.4.4 Closing an Event Stream for the Application Logger Monitor. */
 	if (nullptr != handle_)
 		monitor_->unregisterLoggerClient (handle_), handle_ = nullptr;
-	if ((bool)monitor_)
-		monitor_.release();
+	monitor_.reset();
 /* 9.2.3.2 Shutting down the application logger. */
-	if ((bool)logger_)
-		logger_.release();
+	logger_.reset();
 	return true;
 }
 

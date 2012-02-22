@@ -25,12 +25,18 @@
 #include "microsoft/timer.hh"
 
 #include "config.hh"
-#include "rfa.hh"
-#include "rfa_logging.hh"
 #include "provider.hh"
+
+namespace logging
+{
+	class LogEventProvider;
+}
 
 namespace nezumi
 {
+	class rfa_t;
+	class provider_t;
+
 /* Basic example structure for application state of an item stream. */
 	class broadcast_stream_t : public item_stream_t
 	{

@@ -5,6 +5,7 @@
 
 #include <cassert>
 
+#include "chromium/logging.hh"
 #include "deleter.hh"
 
 using rfa::common::RFA_String;
@@ -51,25 +52,27 @@ nezumi::rfa_t::rfa_t (const config_t& config) :
 
 nezumi::rfa_t::~rfa_t()
 {
-	rfa_config_.release();
+	VLOG(2) << "Closing RFA.";
+	rfa_config_.reset();
 	rfa::common::Context::uninitialize();
 }
 
 bool
 nezumi::rfa_t::init()
 {
-	const RFA_String sessionName (config_.session_name.c_str(), 0, false),
-		connectionName (config_.connection_name.c_str(), 0, false);
-
+	VLOG(2) << "Initializing RFA.";
 	rfa::common::Context::initialize();
 
 /* 8.2.3 Populate Config Database.
  */
+	VLOG(3) << "Populating RFA config database.";
 	std::unique_ptr<rfa::config::StagingConfigDatabase, internal::destroy_deleter> staging (rfa::config::StagingConfigDatabase::create());
 	if (!(bool)staging)
 		return false;
 
 /* Disable Windows Event Logger. */
+	const RFA_String sessionName (config_.session_name.c_str(), 0, false),
+		connectionName (config_.connection_name.c_str(), 0, false);
 	RFA_String name, value;
 
 	name.set ("/Logger/AppLogger/windowsLoggerEnabled");
@@ -107,21 +110,25 @@ nezumi::rfa_t::init()
 	if (!(bool)rfa_config_)
 		return false;
 
+	VLOG(3) << "Merging RFA config database with staging database.";
 	if (!rfa_config_->merge (*staging.get()))
 		return false;
 
 /* Windows Registry override. */
 	if (!config_.key.empty()) {
+		VLOG(3) << "Populating staging database with Windows Registry.";
 		staging.reset (rfa::config::StagingConfigDatabase::create());
 		if (!(bool)staging)
 			return false;
 		name = config_.key.c_str();
 		fix_rfa_string_path (name);
 		staging->load (rfa::config::windowsRegistry, name);
+		VLOG(3) << "Merging RFA config database with Windows Registry staging database.";
 		if (!rfa_config_->merge (*staging.get()))
 			return false;
 	}
 
+	VLOG(3) << "RFA initialization complete.";
 	return true;
 }
 

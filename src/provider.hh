@@ -9,6 +9,9 @@
 #include <cstdint>
 #include <unordered_map>
 
+/* Boost Posix Time */
+#include "boost/date_time/posix_time/posix_time.hpp"
+
 /* Boost noncopyable base class */
 #include <boost/utility.hpp>
 
@@ -23,6 +26,7 @@ namespace nezumi
 {
 /* Performance Counters */
 	enum {
+		PROVIDER_PC_MSGS_SENT,
 		PROVIDER_PC_RFA_MSGS_SENT,
 		PROVIDER_PC_RFA_EVENTS_RECEIVED,
 		PROVIDER_PC_RFA_EVENTS_DISCARDED,
@@ -103,7 +107,8 @@ namespace nezumi
 		void getServiceState (rfa::data::ElementList& elementList);
 		bool resetTokens();
 
-		uint32_t submit (rfa::common::Msg& msg, rfa::sessionLayer::ItemToken& token, void* closure = nullptr) throw (rfa::common::InvalidUsageException);
+		uint32_t send (rfa::common::Msg& msg, rfa::sessionLayer::ItemToken& token, void* closure) throw (rfa::common::InvalidUsageException);
+		uint32_t submit (rfa::common::Msg& msg, rfa::sessionLayer::ItemToken& token, void* closure) throw (rfa::common::InvalidUsageException);
 
 		const config_t& config_;
 
@@ -117,7 +122,7 @@ namespace nezumi
 		std::unique_ptr<rfa::sessionLayer::Session, internal::release_deleter> session_;
 
 /* RFA OMM provider interface. */
-		std::unique_ptr<rfa::sessionLayer::OMMProvider, internal::destroy_deleter> provider_;
+		std::unique_ptr<rfa::sessionLayer::OMMProvider, internal::destroy_deleter> omm_provider_;
 
 /* RFA Error Item event consumer */
 		rfa::common::Handle* error_item_handle_;
@@ -142,6 +147,7 @@ namespace nezumi
 		std::unordered_map<std::string, std::weak_ptr<item_stream_t>> directory_;
 
 /** Performance Counters **/
+		boost::posix_time::ptime last_activity_;
 		uint32_t cumulative_stats_[PROVIDER_PC_MAX];
 		uint32_t snap_stats_[PROVIDER_PC_MAX];
 	};

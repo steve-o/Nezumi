@@ -88,6 +88,31 @@
 
 namespace logging {
 
+// Where to record logging output? A flat file and/or system debug log.
+enum LoggingDestination { LOG_NONE,
+                          LOG_ONLY_TO_FILE,
+                          LOG_ONLY_TO_SYSTEM_DEBUG_LOG,
+                          LOG_TO_BOTH_FILE_AND_SYSTEM_DEBUG_LOG };
+
+// Indicates that the log file should be locked when being written to.
+// Often, there is no locking, which is fine for a single threaded program.
+// If logging is being done from multiple threads or there can be more than
+// one process doing the logging, the file should be locked during writes to
+// make each log outut atomic. Other writers will block.
+//
+// All processes writing to the log file must have their locking set for it to
+// work properly. Defaults to DONT_LOCK_LOG_FILE.
+enum LogLockingState { LOCK_LOG_FILE, DONT_LOCK_LOG_FILE };
+
+// On startup, should we delete or append to an existing log file (if any)?
+// Defaults to APPEND_TO_OLD_LOG_FILE.
+enum OldFileDeletionState { DELETE_OLD_LOG_FILE, APPEND_TO_OLD_LOG_FILE };
+
+enum DcheckState {
+  DISABLE_DCHECK_FOR_NON_OFFICIAL_RELEASE_BUILDS,
+  ENABLE_DCHECK_FOR_NON_OFFICIAL_RELEASE_BUILDS
+};
+
 // Define different names for the ChromiumInitLoggingImpl() function depending on
 // whether NDEBUG is defined or not so that we'll fail to link if someone tries
 // to compile logging.cc with NDEBUG but includes logging.h without defining it,
@@ -101,7 +126,11 @@ namespace logging {
 // Implementation of the InitLogging() method declared below.  We use a
 // more-specific name so we can #define it above without affecting other code
 // that has named stuff "InitLogging".
-bool ChromiumInitLoggingImpl();
+bool ChromiumInitLoggingImpl(const char* log_file,
+			     LoggingDestination logging_dest,
+			     LogLockingState lock_log,
+			     OldFileDeletionState delete_old,
+			     DcheckState dcheck_state);
 
 // Sets the global logging state. Calling this function
 // is recommended, and is normally done at the beginning of application init.
@@ -113,8 +142,13 @@ bool ChromiumInitLoggingImpl();
 // This function may be called a second time to re-direct logging (e.g after
 // loging in to a user partition), however it should never be called more than
 // twice.
-inline bool InitLogging() {
-  return ChromiumInitLoggingImpl();
+inline bool InitLogging(const char* log_file,
+			LoggingDestination logging_dest,
+			LogLockingState lock_log,
+			OldFileDeletionState delete_old,
+			DcheckState dcheck_state) {
+  return ChromiumInitLoggingImpl(log_file, logging_dest, lock_log,
+				 delete_old, dcheck_state);
 }
 
 	void SetMinLogLevel (int level);
@@ -127,6 +161,22 @@ inline bool InitLogging() {
 	int GetVlogLevel (const char (&file)[N]) {
 		return GetVlogLevelHelper (file, N);
 	}
+
+// Sets the common items you want to be prepended to each log message.
+// process and thread IDs default to off, the timestamp defaults to on.
+// If this function is not called, logging defaults to writing the timestamp
+// only.
+	void SetLogItems(bool enable_process_id, bool enable_thread_id,
+                             bool enable_timestamp, bool enable_tickcount);
+
+// Sets the Log Message Handler that gets passed every log message before
+// it's sent to other log destinations (if any).
+// Returns true to signal that it handled the message and the message
+// should not be sent to other log destinations.
+	typedef bool (*LogMessageHandlerFunction)(int severity,
+		const char* file, int line, size_t message_start, const std::string& str);
+	void SetLogMessageHandler(LogMessageHandlerFunction handler);
+	LogMessageHandlerFunction GetLogMessageHandler();
 
 	typedef int LogSeverity;
 	const LogSeverity LOG_VERBOSE = -1;
@@ -294,8 +344,15 @@ inline bool InitLogging() {
 	#define CHECK_GE(val1, val2) CHECK_OP(GE, >=, val1, val2)
 	#define CHECK_GT(val1, val2) CHECK_OP(GT, > , val1, val2)
 
-	#if defined(NDEBUG)
-/* If we're a release build, remove DLOGs but not DCHECKs
+	#if LOGGING_IS_OFFICIAL_BUILD
+/* In order to have optimized code for official builds, remove DLOGs and
+ * DCHECKs.
+ */
+	#	define ENABLE_DLOG 0
+	#	define ENABLE_DCHECK 0
+
+	#elif defined(NDEBUG)
+/* Otherwise, if we're a release build, remove DLOGs but not DCHECKs
  * (since those can still be turned on via a command-line flag).
  */
 	#	define ENABLE_DLOG 0
@@ -355,6 +412,8 @@ inline bool InitLogging() {
 
 	#	if defined(NDEBUG)
 
+	extern DcheckState g_dcheck_state;
+
 	#		if defined(DCHECK_ALWAYS_ON)
 
 	#			define DCHECK_IS_ON() true
@@ -370,7 +429,9 @@ inline bool InitLogging() {
 	#			define COMPACT_LOG_DCHECK COMPACT_LOG_ERROR
 	const LogSeverity LOG_DCHECK = LOG_ERROR;
 	#			define DCHECK_IS_ON() \
-					LOG_IS_ON(DCHECK)
+					((::logging::g_dcheck_state == \
+					  ::logging::ENABLE_DCHECK_FOR_NON_OFFICIAL_RELEASE_BUILDS) && \
+					LOG_IS_ON(DCHECK))
 
 	#		endif  /* defined(DCHECK_ALWAYS_ON) */
 
@@ -506,6 +567,8 @@ inline bool InitLogging() {
 
 		LogSeverity severity_;
 		std::ostringstream stream_;
+		size_t message_start_;  // Offset of the start of the message (past prefix
+					// info).
 /* The file and line information passed in to the constructor. */
 		const char* file_;
 		const int line_;

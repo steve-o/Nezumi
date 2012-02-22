@@ -9,6 +9,7 @@
 
 #include "chromium/logging.hh"
 #include "error.hh"
+#include "rfa_logging.hh"
 #include "rfaostream.hh"
 
 /* RDM Usage Guide: Section 6.5: Enterprise Platform
@@ -47,6 +48,7 @@ nezumi::nezumi_t::nezumi_t()
 nezumi::nezumi_t::~nezumi_t()
 {
 	clear();
+	LOG(INFO) << "fin.";
 }
 
 int
@@ -120,7 +122,8 @@ nezumi::nezumi_t::run ()
 	LOG(INFO) << "Main loop terminated.";
 	return EXIT_SUCCESS;
 cleanup:
-	LOG(INFO) << "Init failed.";
+	LOG(INFO) << "Init failed, cleaning up.";
+	clear();
 	return EXIT_FAILURE;
 }
 
@@ -179,7 +182,23 @@ nezumi::nezumi_t::clear()
 /* Stop generating new events. */
 	if (timer_)
 		SetThreadpoolTimer (timer_.get(), nullptr, 0, 0);
-	timer_.release();
+	timer_.reset();
+
+/* Signal message pump thread to exit. */
+	if ((bool)event_queue_)
+		event_queue_->deactivate();
+
+	msft_stream_.reset();
+
+/* Release everything with an RFA dependency. */
+	assert (provider_.use_count() <= 1);
+	provider_.reset();
+	assert (log_.use_count() <= 1);
+	log_.reset();
+	assert (event_queue_.use_count() <= 1);
+	event_queue_.reset();
+	assert (rfa_.use_count() <= 1);
+	rfa_.reset();
 }
 
 void
@@ -279,7 +298,7 @@ nezumi::nezumi_t::sendRefresh()
 	RFA_String warningText;
 	const uint8_t validation_status = response.validateMsg (&warningText);
 	if (rfa::message::MsgValidationWarning == validation_status) {
-		LOG(WARNING) << "respMsg::validateMsg: { warningText: \"" << warningText << "\" }";
+		LOG(ERROR) << "respMsg::validateMsg: { warningText: \"" << warningText << "\" }";
 	} else {
 		assert (rfa::message::MsgValidationOk == validation_status);
 	}
