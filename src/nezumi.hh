@@ -10,7 +10,6 @@
 
 #ifndef __NEZUMI_HH__
 #define __NEZUMI_HH__
-
 #pragma once
 
 #include <cstdint>

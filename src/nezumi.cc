@@ -90,19 +90,21 @@ nezumi::nezumi_t::run ()
 		goto cleanup;
 	}
 
+{
 /* Timer for demo periodic publishing of items.
  */
 	using namespace boost;
 	using namespace posix_time;
 
-//	time_duration td (seconds (1));
-	timer_.reset (new time_pump_t (not_a_date_time, seconds (1), this));
+	time_duration td (seconds (1));
+	timer_.reset (new time_pump_t (not_a_date_time, td, this));
 	if (!(bool)timer_)
 		goto cleanup;
 	timer_thread_.reset (new boost::thread (*timer_.get()));
 	if (!(bool)timer_thread_)
 		goto cleanup;
-	LOG(INFO) << "Added periodic timer, interval " << to_simple_string (seconds (1));
+	LOG(INFO) << "Added periodic timer, interval " << to_simple_string (td);
+}
 
 	LOG(INFO) << "Init complete, entering main loop.";
 	mainLoop ();
