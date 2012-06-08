@@ -18,11 +18,13 @@
 /* Boost noncopyable base class */
 #include <boost/utility.hpp>
 
+/* Boost threading. */
+#include <boost/thread.hpp>
+
 /* RFA 7.2 */
 #include <rfa.hh>
 
-/* Microsoft wrappers */
-#include "microsoft/timer.hh"
+#include "chromium/logging.hh"
 
 #include "config.hh"
 #include "provider.hh"
@@ -49,11 +51,51 @@ namespace nezumi
 		uint64_t	count;
 	};
 
+/* Periodic timer event source */
+	class time_base_t
+	{
+	public:
+		virtual bool processTimer (boost::posix_time::ptime t) = 0;
+	};
+
+	class time_pump_t
+	{
+	public:
+		time_pump_t (boost::posix_time::ptime due_time, boost::posix_time::time_duration td, time_base_t* cb) :
+			due_time_ (due_time),
+			td_ (td),
+			cb_ (cb)
+		{
+			CHECK(nullptr != cb_);
+			if (due_time_.is_not_a_date_time())
+				due_time_ = boost::get_system_time() + td_;
+		}
+
+		void operator()()
+		{
+			try {
+				while (true) {
+					boost::this_thread::sleep (due_time_);
+					if (!cb_->processTimer (due_time_))
+						break;
+					due_time_ += td_;
+				}
+			} catch (boost::thread_interrupted const&) {
+				LOG(INFO) << "Timer thread interrupted.";
+			}
+		}
+
+	private:
+		boost::system_time due_time_;
+		boost::posix_time::time_duration td_;
+		time_base_t* cb_;
+	};
+
 	class nezumi_t :
+		public time_base_t,
 		boost::noncopyable
 	{
 	public:
-		nezumi_t ();
 		~nezumi_t();
 
 /* Run the provider with the given command-line parameters.
@@ -63,7 +105,7 @@ namespace nezumi
 		void clear();
 
 /* Configured period timer entry point. */
-		void processTimer (void* closure);
+		bool processTimer (boost::posix_time::ptime t) override;
 
 	private:
 
@@ -94,8 +136,9 @@ namespace nezumi
 /* Publish fields. */
 		rfa::data::FieldList fields_;
 
-/* Threadpool timer. */
-		ms::timer timer_;
+/* Thread timer. */
+		std::unique_ptr<time_pump_t> timer_;
+		std::unique_ptr<boost::thread> timer_thread_;
 	};
 
 } /* namespace nezumi */

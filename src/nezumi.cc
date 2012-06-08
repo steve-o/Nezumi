@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <inttypes.h>
 
+#include <windows.h>
+
 #include "chromium/logging.hh"
 #include "error.hh"
 #include "rfa_logging.hh"
@@ -29,25 +31,8 @@ using rfa::common::RFA_String;
 
 static std::weak_ptr<rfa::common::EventQueue> g_event_queue;
 
-static
-void
-on_timer (
-	PTP_CALLBACK_INSTANCE Instance,
-	PVOID Context,
-	PTP_TIMER Timer
-	)
-{
-	nezumi::nezumi_t* nezumi = static_cast<nezumi::nezumi_t*>(Context);
-	nezumi->processTimer (nullptr);
-}
-
-nezumi::nezumi_t::nezumi_t()
-{
-}
-
 nezumi::nezumi_t::~nezumi_t()
 {
-	clear();
 	LOG(INFO) << "fin.";
 }
 
@@ -89,11 +74,6 @@ nezumi::nezumi_t::run ()
 			goto cleanup;
 		msft_stream_ = std::move (stream);
 
-/* Microsoft threadpool timer. */
-		timer_.reset (CreateThreadpoolTimer (static_cast<PTP_TIMER_CALLBACK>(on_timer), this /* closure */, nullptr /* env */));
-		if (!(bool)timer_)
-			goto cleanup;
-
 	} catch (rfa::common::InvalidUsageException& e) {
 		LOG(ERROR) << "InvalidUsageException: { "
 			"Severity: \"" << severity_string (e.getSeverity()) << "\""
@@ -112,14 +92,22 @@ nezumi::nezumi_t::run ()
 
 /* Timer for demo periodic publishing of items.
  */
-	DWORD msPeriod = 1000;
-	SetThreadpoolTimer (timer_.get(), nullptr, msPeriod, 0);
-	LOG(INFO) << "Added periodic timer, interval " << msPeriod << "ms";
+	using namespace boost;
+	using namespace posix_time;
+
+//	time_duration td (seconds (1));
+	timer_.reset (new time_pump_t (not_a_date_time, seconds (1), this));
+	if (!(bool)timer_)
+		goto cleanup;
+	timer_thread_.reset (new boost::thread (*timer_.get()));
+	if (!(bool)timer_thread_)
+		goto cleanup;
+	LOG(INFO) << "Added periodic timer, interval " << to_simple_string (seconds (1));
 
 	LOG(INFO) << "Init complete, entering main loop.";
 	mainLoop ();
-
-	LOG(INFO) << "Main loop terminated.";
+	LOG(INFO) << "Main loop terminated, cleaning up.";
+	clear();
 	return EXIT_SUCCESS;
 cleanup:
 	LOG(INFO) << "Init failed, cleaning up.";
@@ -180,8 +168,11 @@ void
 nezumi::nezumi_t::clear()
 {
 /* Stop generating new events. */
-	if (timer_)
-		SetThreadpoolTimer (timer_.get(), nullptr, 0, 0);
+	if (timer_thread_) {
+		timer_thread_->interrupt();
+		timer_thread_->join();
+	}	
+	timer_thread_.reset();
 	timer_.reset();
 
 /* Signal message pump thread to exit. */
@@ -201,11 +192,22 @@ nezumi::nezumi_t::clear()
 	rfa_.reset();
 }
 
-void
+bool
 nezumi::nezumi_t::processTimer (
-	void*	pClosure
+	boost::posix_time::ptime t
 	)
 {
+/* calculate timer accuracy, typically 15-1ms with default timer resolution.
+ */
+	if (DLOG_IS_ON(INFO)) {
+		const boost::posix_time::ptime now (boost::posix_time::microsec_clock::universal_time());
+		auto ms = (now - t).total_milliseconds();
+		if (0 == ms)
+			LOG(INFO) << "delta " << (now - t).total_microseconds() << "us";
+		else
+			LOG(INFO) << "delta " << ms << "ms";
+	}
+
 	try {
 		sendRefresh();
 	} catch (rfa::common::InvalidUsageException& e) {
@@ -214,6 +216,8 @@ nezumi::nezumi_t::processTimer (
 			", Classification: \"" << classification_string (e.getClassification()) << "\""
 			", StatusText: \"" << e.getStatus().getStatusText() << "\" }";
 	}
+/* continue raising timer events */
+	return true;
 }
 
 bool
