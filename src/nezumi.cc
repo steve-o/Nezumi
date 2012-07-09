@@ -90,21 +90,15 @@ nezumi::nezumi_t::run ()
 		goto cleanup;
 	}
 
-{
 /* Timer for demo periodic publishing of items.
  */
-	using namespace boost;
-	using namespace posix_time;
-
-	time_duration td (seconds (1));
-	timer_.reset (new time_pump_t (not_a_date_time, td, this));
+	timer_.reset (new time_pump_t<boost::chrono::system_clock> (boost::chrono::system_clock::now(), boost::chrono::seconds (1), this));
 	if (!(bool)timer_)
 		goto cleanup;
 	timer_thread_.reset (new boost::thread (*timer_.get()));
 	if (!(bool)timer_thread_)
 		goto cleanup;
-	LOG(INFO) << "Added periodic timer, interval " << to_simple_string (td);
-}
+	LOG(INFO) << "Added periodic timer, interval " << boost::chrono::seconds (1).count() << " seconds";
 
 	LOG(INFO) << "Init complete, entering main loop.";
 	mainLoop ();
@@ -196,18 +190,20 @@ nezumi::nezumi_t::clear()
 
 bool
 nezumi::nezumi_t::processTimer (
-	boost::posix_time::ptime t
+	const boost::chrono::time_point<boost::chrono::system_clock>& t
 	)
 {
 /* calculate timer accuracy, typically 15-1ms with default timer resolution.
  */
 	if (DLOG_IS_ON(INFO)) {
-		const boost::posix_time::ptime now (boost::posix_time::microsec_clock::universal_time());
-		auto ms = (now - t).total_milliseconds();
-		if (0 == ms)
-			LOG(INFO) << "delta " << (now - t).total_microseconds() << "us";
-		else
-			LOG(INFO) << "delta " << ms << "ms";
+		using namespace boost::chrono;
+		auto now = system_clock::now();
+		auto ms = duration_cast<milliseconds> (now - t);
+		if (0 == ms.count()) {
+			LOG(INFO) << "delta " << duration_cast<microseconds> (now - t).count() << "us";
+		} else {
+			LOG(INFO) << "delta " << ms.count() << "ms";
+		}
 	}
 
 	try {

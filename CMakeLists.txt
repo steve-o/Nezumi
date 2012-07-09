@@ -2,17 +2,17 @@
 # x64 Windows Server-only
 # 2011/11/30 -- Steven.McCoy@thomsonreuters.com
 
-cmake_minimum_required (VERSION 2.8)
+cmake_minimum_required (VERSION 2.8.8)
 
 project (Nezumi)
 
-set(RFA_ROOT C:/rfa7.2.0.L1.win-shared.rrg)
-set(BOOST_ROOT C:/boost_1_48_0)
+set(RFA_ROOT D:/rfa7.2.1.L1.win-shared.rrg)
+set(BOOST_ROOT D:/boost_1_50_0)
 set(BOOST_LIBRARYDIR ${BOOST_ROOT}/stage/lib)
 
 set(Boost_USE_STATIC_LIBS ON)
 
-find_package (Boost 1.44 COMPONENTS thread REQUIRED)
+find_package (Boost 1.50 COMPONENTS chrono thread REQUIRED)
 
 #-----------------------------------------------------------------------------
 # force off-tree build

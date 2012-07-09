@@ -14,6 +14,9 @@
 
 #include <cstdint>
 
+/* Boost Chrono. */
+#include <boost/chrono.hpp>
+
 /* Boost noncopyable base class */
 #include <boost/utility.hpp>
 
@@ -51,30 +54,30 @@ namespace nezumi
 	};
 
 /* Periodic timer event source */
+	template<class Clock, class Duration = typename Clock::duration>
 	class time_base_t
 	{
 	public:
-		virtual bool processTimer (boost::posix_time::ptime t) = 0;
+		virtual bool processTimer (const boost::chrono::time_point<Clock, Duration>& t) = 0;
 	};
 
+	template<class Clock, class Duration = typename Clock::duration>
 	class time_pump_t
 	{
 	public:
-		time_pump_t (boost::posix_time::ptime due_time, boost::posix_time::time_duration td, time_base_t* cb) :
+		time_pump_t (const boost::chrono::time_point<Clock, Duration>& due_time, Duration td, time_base_t<Clock, Duration>* cb) :
 			due_time_ (due_time),
 			td_ (td),
 			cb_ (cb)
 		{
 			CHECK(nullptr != cb_);
-			if (due_time_.is_not_a_date_time())
-				due_time_ = boost::get_system_time() + td_;
 		}
 
 		void operator()()
 		{
 			try {
 				while (true) {
-					boost::this_thread::sleep (due_time_);
+					boost::this_thread::sleep_until (due_time_);
 					if (!cb_->processTimer (due_time_))
 						break;
 					due_time_ += td_;
@@ -85,13 +88,13 @@ namespace nezumi
 		}
 
 	private:
-		boost::system_time due_time_;
-		boost::posix_time::time_duration td_;
-		time_base_t* cb_;
+		boost::chrono::time_point<Clock, Duration> due_time_;
+		Duration td_;
+		time_base_t<Clock, Duration>* cb_;
 	};
 
 	class nezumi_t :
-		public time_base_t,
+		public time_base_t<boost::chrono::system_clock>,
 		boost::noncopyable
 	{
 	public:
@@ -104,7 +107,7 @@ namespace nezumi
 		void clear();
 
 /* Configured period timer entry point. */
-		bool processTimer (boost::posix_time::ptime t) override;
+		bool processTimer (const boost::chrono::time_point<boost::chrono::system_clock>& t) override;
 
 	private:
 
@@ -136,7 +139,7 @@ namespace nezumi
 		rfa::data::FieldList fields_;
 
 /* Thread timer. */
-		std::unique_ptr<time_pump_t> timer_;
+		std::unique_ptr<time_pump_t<boost::chrono::system_clock>> timer_;
 		std::unique_ptr<boost::thread> timer_thread_;
 	};
 
