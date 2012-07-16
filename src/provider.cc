@@ -72,7 +72,8 @@ nezumi::provider_t::init()
 /* 6.2.2.1 RFA Version Info.  The version is only available if an application
  * has acquired a Session (i.e., the Session Layer library is loaded).
  */
-	LOG(INFO) << "RFA: { productVersion: \"" << rfa::common::Context::getRFAVersionInfo()->getProductVersion() << "\" }";
+	if (!rfa_->VerifyVersion())
+		return false;
 
 /* 7.5.6 Initializing an OMM Non-Interactive Provider. */
 	VLOG(3) << "Creating OMM provider.";
@@ -159,7 +160,7 @@ nezumi::provider_t::sendLoginRequest()
 	RFA_String warningText;
 	const uint8_t validation_status = request.validateMsg (&warningText);
 	if (rfa::message::MsgValidationWarning == validation_status) {
-		LOG(WARNING) << "MMT_LOGIN::validateMsg: { warningText: \"" << warningText << "\" }";
+		LOG(WARNING) << "MMT_LOGIN::validateMsg: { \"warningText\": \"" << warningText << "\" }";
 		cumulative_stats_[PROVIDER_PC_MMT_LOGIN_MALFORMED]++;
 	} else {
 		assert (rfa::message::MsgValidationOk == validation_status);
@@ -186,8 +187,10 @@ nezumi::provider_t::sendLoginRequest()
 	map.setAssociatedMetaInfo (*item_handle_);
 	rwf_major_version_ = map.getMajorVersion();
 	rwf_minor_version_ = map.getMinorVersion();
-	LOG(INFO) << "RWF: { MajorVersion: " << (unsigned)rwf_major_version_
-		<< ", MinorVersion: " << (unsigned)rwf_minor_version_ << " }";
+	LOG(INFO) << "RWF: { "
+		  "\"MajorVersion\": " << (unsigned)rwf_major_version_ <<
+		", \"MinorVersion\": " << (unsigned)rwf_minor_version_ <<
+		" }";
 	return true;
 }
 
@@ -387,7 +390,9 @@ nezumi::provider_t::processLoginSuccess (
 
 /* ignore any error */
 	} catch (rfa::common::InvalidUsageException& e) {
-		LOG(ERROR) << "MMT_DIRECTORY::InvalidUsageException: { StatusText: \"" << e.getStatus().getStatusText() << "\" }";
+		LOG(ERROR) << "MMT_DIRECTORY::InvalidUsageException: { "
+				"\"StatusText\": \"" << e.getStatus().getStatusText() << "\""
+				" }";
 /* cannot publish until directory is sent. */
 		return;
 	}
@@ -466,7 +471,7 @@ nezumi::provider_t::sendDirectoryResponse()
 	uint8_t validation_status = response.validateMsg (&warningText);
 	if (rfa::message::MsgValidationWarning == validation_status) {
 		cumulative_stats_[PROVIDER_PC_MMT_DIRECTORY_VALIDATED]++;
-		LOG(ERROR) << "MMT_DIRECTORY::validateMsg: { warningText: \"" << warningText << "\" }";
+		LOG(ERROR) << "MMT_DIRECTORY::validateMsg: { \"warningText\": \"" << warningText << "\" }";
 	} else {
 		cumulative_stats_[PROVIDER_PC_MMT_DIRECTORY_MALFORMED]++;
 		assert (rfa::message::MsgValidationOk == validation_status);
@@ -745,10 +750,11 @@ nezumi::provider_t::processOMMCmdErrorEvent (
 {
 	cumulative_stats_[PROVIDER_PC_OMM_CMD_ERRORS]++;
 	LOG(ERROR) << "OMMCmdErrorEvent: { "
-		"CmdId: " << error.getCmdID() <<
-		", State: " << error.getStatus().getState() <<
-		", StatusCode: " << error.getStatus().getStatusCode() <<
-		", StatusText: \"" << error.getStatus().getStatusText() << "\" }";
+		  "\"CmdId\": " << error.getCmdID() <<
+		", \"State\": " << error.getStatus().getState() <<
+		", \"StatusCode\": " << error.getStatus().getStatusCode() <<
+		", \"StatusText\": \"" << error.getStatus().getStatusText() << "\""
+		" }";
 }
 
 /* eof */

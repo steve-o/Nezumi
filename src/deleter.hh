@@ -3,7 +3,6 @@
 
 #ifndef __DELETER_HH__
 #define __DELETER_HH__
-
 #pragma once
 
 #include <memory>

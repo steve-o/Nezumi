@@ -3,14 +3,15 @@
 
 #ifndef __RFA_HH__
 #define __RFA_HH__
-
 #pragma once
+
+#include <memory>
 
 /* Boost noncopyable base class */
 #include <boost/utility.hpp>
 
 /* RFA 7.2 */
-#include <rfa.hh>
+#include <rfa/rfa.hh>
 
 #include "config.hh"
 #include "deleter.hh"
@@ -26,6 +27,7 @@ namespace nezumi
 		~rfa_t();
 
 		bool init() throw (rfa::common::InvalidUsageException);
+		bool VerifyVersion();
 
 	private:
 

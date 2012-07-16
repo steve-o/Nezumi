@@ -48,6 +48,8 @@ add_definitions(
 	-DWIN32_LEAN_AND_MEAN
 # Windows Server 2008 (not-R2)
 	-D_WIN32_WINNT=0x0600
+# RFA version
+        -DRFA_LIBRARY_VERSION="7.2.1."
 )
 
 #-----------------------------------------------------------------------------

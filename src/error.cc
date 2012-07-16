@@ -2,7 +2,7 @@
  */
 
 /* RFA 7.2 headers */
-#include <rfa.hh>
+#include <rfa/rfa.hh>
 
 #include "error.hh"
 

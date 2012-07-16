@@ -5,7 +5,6 @@
 
 #ifndef __CONFIG_HH__
 #define __CONFIG_HH__
-
 #pragma once
 
 #include <string>
@@ -87,19 +86,19 @@ namespace nezumi
 			ss << '"' << *it << '"';
 		}		
 		o << "config_t: { "
-			", service_name: \"" << config.service_name << "\""
-			", rssl_servers: [" << ss.str() << "]"
-			", rssl_default_port: \"" << config.rssl_default_port << "\""
-			", application_id: \"" << config.application_id << "\""
-			", instance_id: \"" << config.instance_id << "\""
-			", user_name: \"" << config.user_name << "\""
-			", position: \"" << config.position << "\" }"
-			", session_name: \"" << config.session_name << "\""
-			", monitor_name: \"" << config.monitor_name << "\""
-			", event_queue_name: \"" << config.event_queue_name << "\""
-			", connection_name: \"" << config.connection_name << "\""
-			", publisher_name: \"" << config.publisher_name << "\""
-			", vendor_name: \"" << config.vendor_name << "\""
+			 " \"service_name\": \"" << config.service_name << "\""
+			", \"rssl_servers\": [" << ss.str() << "]"
+			", \"rssl_default_port\": \"" << config.rssl_default_port << "\""
+			", \"application_id\": \"" << config.application_id << "\""
+			", \"instance_id\": \"" << config.instance_id << "\""
+			", \"user_name\": \"" << config.user_name << "\""
+			", \"position\": \"" << config.position << "\" }"
+			", \"session_name\": \"" << config.session_name << "\""
+			", \"monitor_name\": \"" << config.monitor_name << "\""
+			", \"event_queue_name\": \"" << config.event_queue_name << "\""
+			", \"connection_name\": \"" << config.connection_name << "\""
+			", \"publisher_name\": \"" << config.publisher_name << "\""
+			", \"vendor_name\": \"" << config.vendor_name << "\""
 			" }";
 		return o;
 	}

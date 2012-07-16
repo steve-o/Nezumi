@@ -76,17 +76,17 @@ nezumi::nezumi_t::run ()
 
 	} catch (rfa::common::InvalidUsageException& e) {
 		LOG(ERROR) << "InvalidUsageException: { "
-			"Severity: \"" << severity_string (e.getSeverity()) << "\""
-			", Classification: \"" << classification_string (e.getClassification()) << "\""
-			", StatusText: \"" << e.getStatus().getStatusText() << "\" }";
+			  "\"Severity\": \"" << severity_string (e.getSeverity()) << "\""
+			", \"Classification\": \"" << classification_string (e.getClassification()) << "\""
+			", \"StatusText\": \"" << e.getStatus().getStatusText() << "\" }";
 		goto cleanup;
 	} catch (rfa::common::InvalidConfigurationException& e) {
 		LOG(ERROR) << "InvalidConfigurationException: { "
-			"Severity: \"" << severity_string (e.getSeverity()) << "\""
-			", Classification: \"" << classification_string (e.getClassification()) << "\""
-			", StatusText: \"" << e.getStatus().getStatusText() << "\""
-			", ParameterName: \"" << e.getParameterName() << "\""
-			", ParameterValue: \"" << e.getParameterValue() << "\" }";
+			  "\"Severity\": \"" << severity_string (e.getSeverity()) << "\""
+			", \"Classification\": \"" << classification_string (e.getClassification()) << "\""
+			", \"StatusText\": \"" << e.getStatus().getStatusText() << "\""
+			", \"ParameterName\": \"" << e.getParameterName() << "\""
+			", \"ParameterValue\": \"" << e.getParameterValue() << "\" }";
 		goto cleanup;
 	}
 
@@ -210,9 +210,9 @@ nezumi::nezumi_t::processTimer (
 		sendRefresh();
 	} catch (rfa::common::InvalidUsageException& e) {
 		LOG(ERROR) << "InvalidUsageException: { "
-			"Severity: \"" << severity_string (e.getSeverity()) << "\""
-			", Classification: \"" << classification_string (e.getClassification()) << "\""
-			", StatusText: \"" << e.getStatus().getStatusText() << "\" }";
+			  "\"Severity\": \"" << severity_string (e.getSeverity()) << "\""
+			", \"Classification\": \"" << classification_string (e.getClassification()) << "\""
+			", \"StatusText\": \"" << e.getStatus().getStatusText() << "\" }";
 	}
 /* continue raising timer events */
 	return true;
@@ -237,6 +237,7 @@ nezumi::nezumi_t::sendRefresh()
 	attribInfo.setNameType (rfa::rdm::INSTRUMENT_NAME_RIC);
 	RFA_String service_name (config_.service_name.c_str(), 0, false);	/* reference */
 	attribInfo.setName (msft_stream_->rfa_name);
+	LOG(INFO) << "Publishing to stream " << msft_stream_->rfa_name;
 	attribInfo.setServiceName (service_name);
 	response.setAttribInfo (attribInfo);
 
@@ -255,33 +256,30 @@ nezumi::nezumi_t::sendRefresh()
 	QoS.setRate (rfa::common::QualityOfService::tickByTick);
 	response.setQualityOfService (QoS);
 
-	{
 // not std::map :(  derived from rfa::common::Data
-		fields_.setAssociatedMetaInfo (provider_->getRwfMajorVersion(), provider_->getRwfMinorVersion());
-		fields_.setInfo (kDictionaryId, kFieldListId);
+	fields_.setAssociatedMetaInfo (provider_->getRwfMajorVersion(), provider_->getRwfMinorVersion());
+	fields_.setInfo (kDictionaryId, kFieldListId);
 
-		rfa::data::FieldListWriteIterator it;
-		it.start (fields_);
+	rfa::data::FieldListWriteIterator it;
+	it.start (fields_);
 
-		rfa::data::FieldEntry field;
-		rfa::data::DataBuffer dataBuffer;
-		rfa::data::Real64 real64;
+	rfa::data::FieldEntry field (true);
+	rfa::data::DataBuffer dataBuffer (true);
+	rfa::data::Real64 real64;
 
-		field.setFieldID (kRdmRdnDisplayId);
-		dataBuffer.setUInt32 (100);
-		field.setData (dataBuffer);
-		it.bind (field);
+	field.setFieldID (kRdmRdnDisplayId);
+	dataBuffer.setUInt32 (100);
+	field.setData (dataBuffer), it.bind (field);
 
-		field.setFieldID (kRdmTradePriceId);
-		real64.setValue (++msft_stream_->count);
-		real64.setMagnitudeType (rfa::data::ExponentNeg2);
-		dataBuffer.setReal64 (real64);
-		it.bind (field);
+	field.setFieldID (kRdmTradePriceId);
+	real64.setValue (++msft_stream_->count);
+	real64.setMagnitudeType (rfa::data::Exponent0);
+	dataBuffer.setReal64 (real64);
+	field.setData (dataBuffer), it.bind (field);
 
-		it.complete();
+	it.complete();
 /* Set a reference to field list, not a copy */
-		response.setPayload (fields_);
-	}
+	response.setPayload (fields_);
 
 	rfa::common::RespStatus status;
 /* Item interaction state: Open, Closed, ClosedRecover, Redirected, NonStreaming, or Unspecified. */
@@ -300,7 +298,7 @@ nezumi::nezumi_t::sendRefresh()
 	RFA_String warningText;
 	const uint8_t validation_status = response.validateMsg (&warningText);
 	if (rfa::message::MsgValidationWarning == validation_status) {
-		LOG(ERROR) << "respMsg::validateMsg: { warningText: \"" << warningText << "\" }";
+		LOG(ERROR) << "respMsg::validateMsg: { \"warningText\": \"" << warningText << "\" }";
 	} else {
 		assert (rfa::message::MsgValidationOk == validation_status);
 	}

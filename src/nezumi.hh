@@ -24,7 +24,7 @@
 #include <boost/thread.hpp>
 
 /* RFA 7.2 */
-#include <rfa.hh>
+#include <rfa/rfa.hh>
 
 #include "chromium/logging.hh"
 
