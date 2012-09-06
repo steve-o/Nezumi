@@ -7,7 +7,7 @@ cmake_minimum_required (VERSION 2.8.8)
 project (Nezumi)
 
 set(RFA_ROOT D:/rfa7.2.1.L1.win-shared.rrg)
-set(BOOST_ROOT D:/boost_1_50_0)
+set(BOOST_ROOT D:/boost_1_51_0)
 set(BOOST_LIBRARYDIR ${BOOST_ROOT}/stage/lib)
 
 set(Boost_USE_STATIC_LIBS ON)
@@ -46,8 +46,8 @@ set(LIBRARY_OUTPUT_PATH  ${CMAKE_BINARY_DIR}/lib)
 add_definitions(
 	-DWIN32
 	-DWIN32_LEAN_AND_MEAN
-# Windows Server 2008 (not-R2)
-	-D_WIN32_WINNT=0x0600
+# Windows Server 2008 R2, Windows 7
+	-D_WIN32_WINNT=0x0601
 # RFA version
         -DRFA_LIBRARY_VERSION="7.2.1."
 )
