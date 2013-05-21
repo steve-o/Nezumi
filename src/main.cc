@@ -22,7 +22,7 @@ public:
 		CommandLine::Init (argc, argv);
 /* forward onto logging */
 		logging::InitLogging(
-			"/psych.log",
+			"/nezumi.log",
 #	if 0
 			logging::LOG_ONLY_TO_FILE,
 #	else
